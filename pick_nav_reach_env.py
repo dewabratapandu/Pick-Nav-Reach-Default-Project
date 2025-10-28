@@ -371,10 +371,14 @@ class PickNavReachEnv:
 
 
 if __name__ == "__main__":
+    # It will load the robot and the environment
+    # Since we also want to modify the robot, we should change this one too.
     env = PickNavReachEnv(seed=42)
     env.reset()
     print(f"Action size: {env.action_size}, Obs size: {env.obs_size}")
     
+    # This is the main part we should replace.
+    # There are 15 units of action we should control. Check keyboard-action-readme.md!
     keyboard_controller = KeyBoardController(env)
     
     # for i in range (10000):
