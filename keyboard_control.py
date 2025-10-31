@@ -3,7 +3,8 @@ import pybullet as p
 
 
 class KeyBoardController:
-    def __init__(self, env):
+    def __init__(self, env, use_barret_hand=False):
+        self.use_barret_hand = use_barret_hand
         self.env = env
         self.action = env.agent_qpos # np.zeros(self.env.action_size)
         self.action_scale = np.array([0.01] * env.action_size)
@@ -25,6 +26,14 @@ class KeyBoardController:
         self.wrist_flex = 0
         self.wrist_roll = 0
         self.gripper_open = 0
+        self.finger11 = 0
+        self.finger12 = 0
+        self.finger13 = 0
+        self.finger21 = 0
+        self.finger22 = 0
+        self.finger23 = 0
+        self.finger32 = 0
+        self.finger33 = 0
 
     def key_callback(self):
         keys = p.getKeyboardEvents()
@@ -158,17 +167,101 @@ class KeyBoardController:
             if (k == ord("2") and (v & p.KEY_WAS_RELEASED)):
                 self.wrist_roll = 0
 
-            # gripper
-            if (k == ord('3') and (v & p.KEY_WAS_TRIGGERED)):
-                self.gripper_open = -1
-            if (k == ord('3') and (v & p.KEY_WAS_RELEASED)):
-                self.gripper_open = 0
-            if (k == ord('4') and (v & p.KEY_WAS_TRIGGERED)):
-                self.gripper_open = 1
-            if (k == ord('4') and (v & p.KEY_WAS_RELEASED)):
-                self.gripper_open = 0
+            if (not self.use_barret_hand):
+                # gripper
+                if (k == ord('3') and (v & p.KEY_WAS_TRIGGERED)):
+                    self.gripper_open = -1
+                if (k == ord('3') and (v & p.KEY_WAS_RELEASED)):
+                    self.gripper_open = 0
+                if (k == ord('4') and (v & p.KEY_WAS_TRIGGERED)):
+                    self.gripper_open = 1
+                if (k == ord('4') and (v & p.KEY_WAS_RELEASED)):
+                    self.gripper_open = 0
+            else:
+                # finger 32
+                if (k == ord('3') and (v & p.KEY_WAS_TRIGGERED)):
+                    self.finger32 = -1
+                if (k == ord('3') and (v & p.KEY_WAS_RELEASED)):
+                    self.finger32 = 0
+                if (k == ord('4') and (v & p.KEY_WAS_TRIGGERED)):
+                    self.finger32 = 1
+                if (k == ord('4') and (v & p.KEY_WAS_RELEASED)):
+                    self.finger32 = 0
+                    
+                # finger 33
+                if (k == ord('5') and (v & p.KEY_WAS_TRIGGERED)):
+                    self.finger33 = -1
+                if (k == ord('5') and (v & p.KEY_WAS_RELEASED)):
+                    self.finger33 = 0
+                if (k == ord('6') and (v & p.KEY_WAS_TRIGGERED)):
+                    self.finger33 = 1
+                if (k == ord('6') and (v & p.KEY_WAS_RELEASED)):
+                    self.finger33 = 0
+                
+                # finger 11
+                if (k == ord('7') and (v & p.KEY_WAS_TRIGGERED)):
+                    self.finger11 = -1
+                if (k == ord('7') and (v & p.KEY_WAS_RELEASED)):
+                    self.finger11 = 0
+                if (k == ord('8') and (v & p.KEY_WAS_TRIGGERED)):
+                    self.finger11 = 1
+                if (k == ord('8') and (v & p.KEY_WAS_RELEASED)):
+                    self.finger11 = 0
+                
+                # finger 12
+                if (k == ord('9') and (v & p.KEY_WAS_TRIGGERED)):
+                    self.finger12 = -1
+                if (k == ord('9') and (v & p.KEY_WAS_RELEASED)):
+                    self.finger12 = 0
+                if (k == ord('0') and (v & p.KEY_WAS_TRIGGERED)):
+                    self.finger12 = 1
+                if (k == ord('0') and (v & p.KEY_WAS_RELEASED)):
+                    self.finger12 = 0
+                
+                # finger 13
+                if (k == ord('-') and (v & p.KEY_WAS_TRIGGERED)):
+                    self.finger13 = -1
+                if (k == ord('-') and (v & p.KEY_WAS_RELEASED)):
+                    self.finger13 = 0
+                if (k == ord('=') and (v & p.KEY_WAS_TRIGGERED)):
+                    self.finger13 = 1
+                if (k == ord('=') and (v & p.KEY_WAS_RELEASED)):
+                    self.finger13 = 0
+                
+                # finger 21
+                if (k == ord('b') and (v & p.KEY_WAS_TRIGGERED)):
+                    self.finger21 = -1
+                if (k == ord('b') and (v & p.KEY_WAS_RELEASED)):
+                    self.finger21 = 0
+                if (k == ord('n') and (v & p.KEY_WAS_TRIGGERED)):
+                    self.finger21 = 1
+                if (k == ord('n') and (v & p.KEY_WAS_RELEASED)):
+                    self.finger21 = 0
+                
+                # finger 22
+                if (k == ord('m') and (v & p.KEY_WAS_TRIGGERED)):
+                    self.finger22 = -1
+                if (k == ord('m') and (v & p.KEY_WAS_RELEASED)):
+                    self.finger22 = 0
+                if (k == ord(',') and (v & p.KEY_WAS_TRIGGERED)):
+                    self.finger22 = 1
+                if (k == ord(',') and (v & p.KEY_WAS_RELEASED)):
+                    self.finger22 = 0
+                
+                # finger 23
+                if (k == ord('.') and (v & p.KEY_WAS_TRIGGERED)):
+                    self.finger23 = -1
+                if (k == ord('.') and (v & p.KEY_WAS_RELEASED)):
+                    self.finger23 = 0
+                if (k == ord('/') and (v & p.KEY_WAS_TRIGGERED)):
+                    self.finger23 = 1
+                if (k == ord('/') and (v & p.KEY_WAS_RELEASED)):
+                    self.finger23 = 0
 
-        unit_action = [self.forward, self.turn, self.yaw, self.torso_lift, self.head_pan, self.head_tilt, self.shoulder_pan, self.shoulder_lift, self.upperarm_roll, self.elbow_flex, self.forearm_roll, self.wrist_flex, self.wrist_roll, self.gripper_open, self.gripper_open]
+        if (self.use_barret_hand):
+            unit_action = [self.forward, self.turn, self.yaw, self.torso_lift, self.head_pan, self.head_tilt, self.shoulder_pan, self.shoulder_lift, self.upperarm_roll, self.elbow_flex, self.forearm_roll, self.wrist_flex, self.wrist_roll, self.finger32, self.finger33, self.finger11, self.finger12, self.finger13, self.finger21, self.finger22, self.finger23]
+        else:
+            unit_action = [self.forward, self.turn, self.yaw, self.torso_lift, self.head_pan, self.head_tilt, self.shoulder_pan, self.shoulder_lift, self.upperarm_roll, self.elbow_flex, self.forearm_roll, self.wrist_flex, self.wrist_roll, self.gripper_open, self.gripper_open]
         print("unit_action: ", unit_action)
         self.action = self.action + self.action_scale * np.array(unit_action)
         

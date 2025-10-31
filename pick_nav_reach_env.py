@@ -15,7 +15,7 @@ class PickNavReachEnv:
     def __init__(self, 
                  seed=0,
                  object_idx=5,
-                 ):
+                 use_barret_hand=True):
         self.set_seed(seed)
 
         self.pb_physics_client = p.connect(p.GUI)
@@ -29,6 +29,7 @@ class PickNavReachEnv:
 
         self.seed = seed
         self.object_idx = object_idx
+        self.use_barret_hand = use_barret_hand
         
         self.action_scale = 0.05
         self.max_force = 2000000
@@ -57,12 +58,14 @@ class PickNavReachEnv:
         # Place the Fetch base near the table
         base_pos = [-2, 0.0, 0.0]
         base_ori = p.getQuaternionFromEuler([0, 0, 0])
+        urdf_file = "assets/fetch/fetch_barretthand.urdf" if self.use_barret_hand else "assets/fetch/fetch.urdf"
         self.robot_id = p.loadURDF(
-            "assets/fetch/fetch.urdf",
+            urdf_file,
             base_pos,
             base_ori,
             useFixedBase=True,
-            # flags=p.URDF_USE_SELF_COLLISION | p.URDF_USE_SELF_COLLISION_EXCLUDE_ALL_PARENTS,
+            # Pandu's Note: in the original code, flags was commented. But somehow commenting it made the robot shake uncontrollably
+            flags=p.URDF_USE_SELF_COLLISION | p.URDF_USE_SELF_COLLISION_EXCLUDE_ALL_PARENTS,
         )
 
         # Collect joint info (skip fixed)
@@ -94,10 +97,10 @@ class PickNavReachEnv:
         # self.joint_upper[self.joint_upper==-1] = np.inf
         # self.joint_ranges[self.joint_upper==np.inf] = np.inf
         
-        # print("Controllable joints:", len(self.joint_indices))
-        # print("Joint Indices:", self.joint_indices)
-        # print("Joint Lower:", self.joint_lower)
-        # print("Joint Upper:", self.joint_upper)
+        print("Controllable joints:", len(self.joint_indices))
+        print("Joint Indices:", self.joint_indices)
+        print("Joint Lower:", self.joint_lower)
+        print("Joint Upper:", self.joint_upper)
 
         # Set an initial configuration
         self.init_qpos = np.clip(
@@ -254,13 +257,11 @@ class PickNavReachEnv:
         print("target: ", target)
 
         # Position control for all controllable joints
-        position_gains = [0.3, 0.3, 0.3,  # base movement: xy trans and z rot 
-                           0.3, # torso lift 
-                           0.3, 0.3, # head pan & tilt
-                           0.3, 0.3, # shoulder pan & lift
-                           0.3, 0.3, 0.3, 0.3, 0.3, # arm 
-                           0.03, 0.03] # gripper
-        # position_gains = np.array([0.3] * len(self.joint_indices))
+        position_gains = np.array([3e-1] * len(self.joint_indices))
+        if (self.use_barret_hand):
+            position_gains[-8:] = 0.05
+        else:
+            position_gains[-2:] = 0.03
         velocity_gains = np.zeros_like(position_gains) #np.sqrt(np.array(position_gains))
         p.setJointMotorControlArray(
             bodyUniqueId=self.robot_id,
@@ -371,15 +372,17 @@ class PickNavReachEnv:
 
 
 if __name__ == "__main__":
+    USE_BARRET_HAND = True
+    
     # It will load the robot and the environment
     # Since we also want to modify the robot, we should change this one too.
-    env = PickNavReachEnv(seed=42)
+    env = PickNavReachEnv(seed=42, use_barret_hand=USE_BARRET_HAND)
     env.reset()
     print(f"Action size: {env.action_size}, Obs size: {env.obs_size}")
     
     # This is the main part we should replace.
     # There are 15 units of action we should control. Check keyboard-action-readme.md!
-    keyboard_controller = KeyBoardController(env)
+    keyboard_controller = KeyBoardController(env, use_barret_hand=USE_BARRET_HAND)
     
     # for i in range (10000):
     import time
