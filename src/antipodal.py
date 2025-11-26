@@ -102,7 +102,7 @@ class AntiPodalGrasping:
         
         # 2. Set Defaults (Base stops, Torso up, Head down)
         # action[0:3] = obs['qpos'][0:3] # Hold current base position (don't drift)
-        action[0] = 1.4 # table pos, need to have a better calcuclation
+        action[0] = 1.2 # table pos, need to have a better calcuclation
         action[3] = self.torso_height
         action[5] = self.head_tilt
         
@@ -175,7 +175,7 @@ class AntiPodalGrasping:
             # 2. Define your Gripper Length
             # For Fetch, distance from Wrist Roll Link to Fingertips is approx 20cm (0.2m)
             # You may need to tune this: 0.18 to 0.22 is a common range.
-            gripper_length = 0.09
+            gripper_length = 0.01
             
             # 3. Calculate the Wrist Position
             # We "back up" from the banana center along the approach vector
@@ -199,7 +199,7 @@ class AntiPodalGrasping:
             
             rot_mat = np.array(p.getMatrixFromQuaternion(t_orn)).reshape(3, 3)
             approach_vec = rot_mat[:, 0]
-            gripper_length = 0.09
+            gripper_length = 0.01
             
             wrist_target_pos = t_pos - (approach_vec * gripper_length)
             
@@ -207,7 +207,7 @@ class AntiPodalGrasping:
             action[6:13] = arm_cmd
             
             # COMMAND GRIPPER CLOSED
-            gripper_cmd = 0.02
+            gripper_cmd = 0.0
             
             self.timer += 1
             if self.timer > 40: # Wait for gripper to squeeze
@@ -223,7 +223,7 @@ class AntiPodalGrasping:
             action[6:13] = arm_cmd
             
             # Keep Gripper Closed
-            gripper_cmd = 0.02
+            gripper_cmd = 0.0
             
             # End condition
             if obs['object_pos'][2] > (self.table_height + 0.05): # If object is off table
@@ -236,7 +236,7 @@ class AntiPodalGrasping:
         print("state:", self.state, ", action:", action)
         return action
 
-    def generate_best_grasp(self, points, normals, num_samples=200):
+    def generate_best_grasp(self, points, normals, num_samples=1000):
         """
         points: (N, 3) numpy array, point cloud of the object we want to pick
         normals: (N, 3) numpy array, orientation of the point cloud
@@ -245,22 +245,24 @@ class AntiPodalGrasping:
         
         # 1. Filter out points that are too low (table collision)
         # Assuming Z is up. Adjust threshold slightly above table height (e.g., +1cm)
-        valid_indices = np.where(points[:, 2] > (self.table_height + 0.01))[0]
+        height_threshold = self.table_height + 0.025 
+        valid_indices = np.where(points[:, 2] > height_threshold)[0]
         if len(valid_indices) < 2:
             return None, None
             
         points = points[valid_indices]
         normals = normals[valid_indices]
         
-        p.addUserDebugPoints(
-            pointPositions=points,
-            pointColorsRGB=[[0, 0, 1]] * points.shape[0],
-            pointSize=2.0,
-            lifeTime=0
-        )
+        # p.addUserDebugPoints(
+        #     pointPositions=points,
+        #     pointColorsRGB=[[0, 0, 1]] * points.shape[0],
+        #     pointSize=2.0,
+        #     lifeTime=0
+        # )
         
         best_score = -1.0
         best_grasp = (None, None) # (pos, orn)
+        best_points = (None, None)
 
         # 2. Random Sampling Loop
         for _ in range(num_samples):
@@ -350,14 +352,28 @@ class AntiPodalGrasping:
                     
                     # Construct Rotation Matrix (3x3)
                     # [x_axis, y_axis, z_axis] as columns
-                    rot_matrix = np.column_stack((x_axis, y_axis, z_axis))
+                    new_y = -z_axis
+                    new_z = y_axis
+                    rot_matrix = np.column_stack((x_axis, new_y, new_z))
+                    
+                    # Push it 2cm deeper
+                    depth_nudge = 0.0
+                    center_pos_deep = center_pos + (x_axis * depth_nudge)
                     
                     # Convert to Quaternion (xyzw)
-                    # You can use Scipy or a manual conversion helper
                     quat = self.matrix_to_quaternion(rot_matrix)
                     
-                    best_grasp = (center_pos, quat)
+                    # Return the DEEP center, not the surface center
+                    best_grasp = (center_pos_deep, quat)
+                    best_points = (p_a, p_b)
 
+        contact_points = np.array([best_points[0], best_points[1]])
+        p.addUserDebugPoints(
+            pointPositions=best_points,
+            pointColorsRGB=[[1, 0, 1]] * contact_points.shape[0],
+            pointSize=20.0,
+            lifeTime=0
+        )
         return best_grasp
 
     def matrix_to_quaternion(self, R):

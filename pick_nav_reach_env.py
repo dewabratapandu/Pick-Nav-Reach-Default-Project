@@ -274,7 +274,7 @@ class PickNavReachEnv:
         if (self.use_barret_hand):
             position_gains[-8:] = 0.05
         else:
-            position_gains[-2:] = 0.03
+            position_gains[-2:] = 0.13
         velocity_gains = np.zeros_like(position_gains) #np.sqrt(np.array(position_gains))
         p.setJointMotorControlArray(
             bodyUniqueId=self.robot_id,
