@@ -8,17 +8,19 @@ from pathlib import Path
 from maze_utils import generate_maze_map, add_left_room_to_maze, create_maze_urdf
 from copy import deepcopy
 from keyboard_control import KeyBoardController
-from utils import closest_joint_values
+from utils import closest_joint_values, tuck_arm
+import path_planner as path_planner
+import time
 
 class PickNavReachEnv:
 
     def __init__(self, 
                  seed=0,
                  object_idx=5,
-                 use_barret_hand=True):
+                 use_barret_hand=False):
         self.set_seed(seed)
 
-        self.pb_physics_client = p.connect(p.GUI)
+        self.pb_physics_client = p.connect(p.GUI) #change for training to p.DIRECT
         p.setAdditionalSearchPath(pybullet_data.getDataPath()) 
         p.setGravity(0,0,-9.8)
 
@@ -71,7 +73,7 @@ class PickNavReachEnv:
         # Collect joint info (skip fixed)
         n_joints = p.getNumJoints(self.robot_id)
         indices = []
-        lowers, uppers, ranges, rest = [], [], [], []
+        lowers, uppers, ranges, rest, name_to_id = [], [], [], [], {}
 
         for j in range(n_joints):
             info = p.getJointInfo(self.robot_id, j)
@@ -82,6 +84,7 @@ class PickNavReachEnv:
                 uppers.append(info[9])
                 ranges.append(info[9] - info[8])
                 rest.append(info[10])  # joint damping? (PyBullet packs different things; we keep a placeholder)
+                name_to_id[info[1].decode("utf-8")] = j
 
                 p.setJointMotorControl2(
                     self.robot_id, j, p.VELOCITY_CONTROL, force=0.0,
@@ -92,6 +95,7 @@ class PickNavReachEnv:
         self.joint_upper = np.array(uppers, dtype=np.float32)
         self.joint_ranges = np.array(ranges, dtype=np.float32)
         self.rest_poses = np.zeros_like(self.joint_lower, dtype=np.float32)
+        self.joint_name_to_id = name_to_id
         
         # self.joint_lower[self.joint_upper==-1] = -np.inf
         # self.joint_upper[self.joint_upper==-1] = np.inf
@@ -372,7 +376,7 @@ class PickNavReachEnv:
 
 
 if __name__ == "__main__":
-    USE_BARRET_HAND = True
+    USE_BARRET_HAND = False
     
     # It will load the robot and the environment
     # Since we also want to modify the robot, we should change this one too.
@@ -383,16 +387,55 @@ if __name__ == "__main__":
     # This is the main part we should replace.
     # There are 15 units of action we should control. Check keyboard-action-readme.md!
     keyboard_controller = KeyBoardController(env, use_barret_hand=USE_BARRET_HAND)
-    
-    # for i in range (10000):
-    import time
+
+    #TODO: pick the object
+
+    #tuck robot arm to minimize space
+    qpos, _, _, _ = env._get_state()
+    tuck_arm_pos = tuck_arm(qpos, env.joint_name_to_id, env.joint_indices)
+    _, _ = env.step(tuck_arm_pos) #move the arm
+    p.stepSimulation()
+    time.sleep(1. / 240.)
+
+    #calculate robot footprint
+    footprint = path_planner.get_robot_footprint(env.robot_id)
+    print(f"footprint: {footprint}")
+
+    #using width and depth for radius
+    robot_radius = footprint[1] / 2
+
+    #calculate map
+    pp = path_planner.PathPlanner(env.cube_positions, 22, 12, 0.2, robot_radius)
+    pp.generate_map()
+
+    # calculate path
+    robot_pos, _ = p.getBasePositionAndOrientation(env.robot_id, env.pb_physics_client)
+    path = pp.dijkstra_2d((robot_pos[0],robot_pos[1]), (env.goal_pos[0], env.goal_pos[1]))
+    print(f"Path to be taken: {path}")
+
+    #move the robot along the path
+    path_idx = 0
     while True:
         # random_action = np.random.uniform(-1.0, 1.0, size=(env.action_size,))
-        action = keyboard_controller.get_action()
-        obs, info = env.step(action)
-        for k, v in info.items():
-            print(f"{k}: {v}")
-        # p.stepSimulation()
-        # time.sleep(1./240.)
+        # action = keyboard_controller.get_action()
+        qpos, _, _, _ = env._get_state()
+
+        updated_pos, path_idx, is_complete = pp.follow_path(path, path_idx, qpos, (robot_pos[0], robot_pos[1]))
+        if not is_complete:
+            #keep arm locked in-position
+            action = tuck_arm_pos.copy()
+            #updating base positions
+            action[0] = updated_pos[0]
+            action[1] = updated_pos[1]
+            action[2] = updated_pos[2]
+            #TODO: keep the grasp also in locked position
+            obs, info = env.step(action)
+            # for k, v in info.items():
+            #    print(f"{k}: {v}")
+            p.stepSimulation()
+        else:
+            print("Path complete")
+        time.sleep(1. / 240.)
+
 
 
