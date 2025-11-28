@@ -9,6 +9,7 @@ from maze_utils import generate_maze_map, add_left_room_to_maze, create_maze_urd
 from copy import deepcopy
 
 from src.antipodal import AntiPodalGrasping
+from src.antipodal_barrethand import AntiPodalBarretGrasping
 from keyboard_control import KeyBoardController
 from utils import closest_joint_values
 
@@ -58,7 +59,7 @@ class PickNavReachEnv:
 
     def _load_agent(self):
         # Place the Fetch base near the table
-        base_pos = [-2, 0.0, 0.0]
+        base_pos = [-2, 0.0, 0.01] 
         base_ori = p.getQuaternionFromEuler([0, 0, 0])
         urdf_file = "assets/fetch/fetch_barretthand.urdf" if self.use_barret_hand else "assets/fetch/fetch.urdf"
         self.robot_id = p.loadURDF(
@@ -67,7 +68,7 @@ class PickNavReachEnv:
             base_ori,
             useFixedBase=True,
             # Pandu's Note: in the original code, flags was commented. But somehow commenting it made the robot shake uncontrollably
-            # flags=p.URDF_USE_SELF_COLLISION | p.URDF_USE_SELF_COLLISION_EXCLUDE_ALL_PARENTS,
+            flags=p.URDF_USE_SELF_COLLISION | p.URDF_USE_SELF_COLLISION_EXCLUDE_ALL_PARENTS,
         )
 
         # Collect joint info (skip fixed)
@@ -78,7 +79,8 @@ class PickNavReachEnv:
         for j in range(n_joints):
             info = p.getJointInfo(self.robot_id, j)
             joint_type = info[2]
-            link_names.append(info[12].decode("utf-8"))
+            link_name = info[12].decode('utf-8')
+            link_names.append(link_name)
             if joint_type in (p.JOINT_REVOLUTE, p.JOINT_PRISMATIC):
                 indices.append(j)
                 lowers.append(info[8])
@@ -89,6 +91,10 @@ class PickNavReachEnv:
                 p.setJointMotorControl2(
                     self.robot_id, j, p.VELOCITY_CONTROL, force=0.0,
                 )
+            if "finger" in link_name:
+                # Lateral Friction = 1.0 (Rubber) to 2.0 (Sticky Tape)
+                # Spinning Friction helps prevent rotation slips
+                p.changeDynamics(self.robot_id, j, lateralFriction=4.0, spinningFriction=0.1)
 
         self.joint_indices = indices
         self.joint_lower = np.array(lowers, dtype=np.float32)
@@ -114,7 +120,7 @@ class PickNavReachEnv:
         self._set_qpos(self.init_qpos)
         
         # Get the link id for the hand (EEF)
-        eef_link_name = "bh_base_link" if self.use_barret_hand else "gripper_link"
+        eef_link_name = "virtual_grasp_frame" if self.use_barret_hand else "gripper_link"
         self.eef_id = link_names.index(eef_link_name)
         self.eef_marker = p.loadURDF("assets/frame_marker/frame_marker_target.urdf", [0,0,0], useFixedBase=True, globalScaling=0.25)
         print(f"End Effector Link ID: {self.eef_id}")
@@ -271,10 +277,13 @@ class PickNavReachEnv:
 
         # Position control for all controllable joints
         position_gains = np.array([3e-1] * len(self.joint_indices))
+        max_vels = np.array([1.5] * len(self.joint_indices))
         if (self.use_barret_hand):
             position_gains[-8:] = 0.05
+            max_vels[-8:] = 0.1
         else:
             position_gains[-2:] = 0.13
+            max_vels[-2:] = 0.1
         velocity_gains = np.zeros_like(position_gains) #np.sqrt(np.array(position_gains))
         p.setJointMotorControlArray(
             bodyUniqueId=self.robot_id,
@@ -389,18 +398,21 @@ class PickNavReachEnv:
         return obs, is_ready
 
 if __name__ == "__main__":
-    USE_BARRET_HAND = False
+    USE_BARRET_HAND = True
     
     # It will load the robot and the environment
     # Since we also want to modify the robot, we should change this one too.
-    env = PickNavReachEnv(seed=42, use_barret_hand=USE_BARRET_HAND)
+    env = PickNavReachEnv(seed=42, object_idx=5, use_barret_hand=USE_BARRET_HAND)
     env.reset()
     print(f"Action size: {env.action_size}, Obs size: {env.obs_size}")
     
     # This is the main part we should replace.
     # There are 15 units of action we should control. Check keyboard-action-readme.md!
     keyboard_controller = KeyBoardController(env, use_barret_hand=USE_BARRET_HAND)
-    antipodal_controller = AntiPodalGrasping(env.robot_id, range(6,13), [13,14])
+    if (USE_BARRET_HAND):
+        antipodal_controller = AntiPodalBarretGrasping(env.robot_id, range(0, 6), range(6,13), range(13, 21))
+    else:
+        antipodal_controller = AntiPodalGrasping(env.robot_id, range(6,13), [13,14])
     
     # for i in range (10000):
     import time

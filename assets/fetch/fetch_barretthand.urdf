@@ -420,6 +420,19 @@
     </collision>
   </link>
 
+  <link name="virtual_grasp_frame">
+    <inertial>
+      <mass value="0.0001"/> <inertia ixx="0" ixy="0" ixz="0" iyy="0" iyz="0" izz="0"/>
+    </inertial>
+  </link>
+
+  <joint name="virtual_grasp_joint" type="fixed">
+    <parent link="bh_base_link"/> 
+    <child link="virtual_grasp_frame"/>
+    
+    <origin rpy="0 -1.5708 0" xyz="0 0 0"/> 
+  </joint>
+
   <!-- finger 3 -->
   <!-- finger 32 link -->
   <link name="bh_finger_32_link">
