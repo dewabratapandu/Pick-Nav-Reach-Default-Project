@@ -2,12 +2,13 @@ import numpy as np
 import pybullet as p
 
 class AntiPodalGrasping:
-    def __init__(self, robot_id, arm_indices, gripper_indices, max_width=0.1, table_height=0.62):
+    def __init__(self, robot_id, body_indices, arm_indices, gripper_indices, max_width=0.1, table_height=0.62):
         self.bot_id = robot_id
         self.max_width = max_width
         self.table_height = table_height
         
         # Joint Indices (From your URDF analysis)
+        self.body_indices = body_indices
         self.arm_indices = arm_indices         # e.g., [6, 7, 8, 9, 10, 11, 12]
         self.gripper_indices = gripper_indices # e.g., [13, 14]
         self.base_index = 0
@@ -25,8 +26,7 @@ class AntiPodalGrasping:
             print("Error: Could not find 'gripper_link'!")
         
         # State Machine Variables
-        self.smoothed_arm_cmd = None
-        self.state = "APPROACH_TABLE" 
+        self.state = "IDLE" 
         self.target_grasp = None # (pos, orn)
         self.timer = 0
         
@@ -35,7 +35,7 @@ class AntiPodalGrasping:
         self.head_tilt = 0.6 
 
     def reset(self):
-        self.state = "APPROACH_TABLE"
+        self.state = "IDLE"
         self.target_grasp = None
         self.timer = 0
 
@@ -53,39 +53,7 @@ class AntiPodalGrasping:
             residualThreshold=1e-7  # DECREASE THIS (Require higher precision)
         )
         
-        # Map the huge list of all joints to just the arm joints we control.
-        # Note: This slicing depends on your specific robot setup.
-        # Assuming IK returns all movable joints in order.
-        # You might need to adjust this slice based on your specific robot index list!
-        # Standard Fetch mapping usually aligns well if arm_indices are contiguous.
-        
-        # Create a dictionary or list map if indices are non-contiguous
-        arm_solutions = []
-        for i, idx in enumerate(self.arm_indices):
-            # Safe mapping: Check the length
-            if idx < len(joint_poses):
-                arm_solutions.append(joint_poses[idx])
-            else:
-                # Fallback if mapping fails (shouldn't happen on standard Fetch)
-                arm_solutions.append(0.0)
-        
-        return arm_solutions
-    
-    def smooth_action(self, current_arm_q, arm_cmd):
-        # 1. On the very first run, initialize the smoother to current position
-        if self.smoothed_arm_cmd is None:
-            self.smoothed_arm_cmd = np.array(current_arm_q)
-
-        # 2. Calculate the difference between "Where I am" and "Where I want to be"
-        diff = np.array(arm_cmd) - self.smoothed_arm_cmd
-
-        # 3. Limit the speed! (Max 0.05 radians per step)
-        # This prevents the "Explosive" jump.
-        step_size = 0.05 
-        diff = np.clip(diff, -step_size, step_size)
-
-        # 4. Update the smoothed command
-        self.smoothed_arm_cmd += diff
+        return joint_poses
 
     def get_action(self, obs):
         """
@@ -100,12 +68,6 @@ class AntiPodalGrasping:
         # 1. Initialize Action Array (15 DoF)
         action = np.zeros(15)
         
-        # 2. Set Defaults (Base stops, Torso up, Head down)
-        # action[0:3] = obs['qpos'][0:3] # Hold current base position (don't drift)
-        action[0] = 1.2 # table pos, need to have a better calcuclation
-        action[3] = self.torso_height
-        action[5] = self.head_tilt
-        
         # Default Gripper: Open (0.05)
         gripper_cmd = 0.05
         
@@ -115,11 +77,8 @@ class AntiPodalGrasping:
 
         # --- STATE MACHINE ---
         
-        if self.state == "APPROACH_TABLE":
-            self.timer += 1
-            if self.timer > 50: # Give it 50 steps (~0.2s)
-                self.timer = 0
-                self.state = "CALCULATE"
+        if self.state == "IDLE":
+            self.state = "CALCULATE"
 
         elif self.state == "CALCULATE":
             # Run the Antipodal Sampling Logic
@@ -137,7 +96,7 @@ class AntiPodalGrasping:
                 print("No grasp found, retrying...")
                 # Stay in CALCULATE or fail
             
-            action[6:13] = current_arm_q # Hold
+            action[2:13] = current_arm_q # Hold
 
         elif self.state == "APPROACH_PRE":
             # Target: 15cm BEHIND the object
@@ -148,16 +107,38 @@ class AntiPodalGrasping:
             approach_vec = rot_mat[:, 0]
             pre_pos = t_pos - (approach_vec * 0.20)
             pre_pos[2] = pre_pos[2] + 0.5
-            # pre_pos = t_pos.copy()
-            # pre_pos[2]  = pre_pos[2] + 0.3
             p.loadURDF("assets/frame_marker/frame_marker_target.urdf", pre_pos, t_orn, useFixedBase=True, globalScaling=0.25)
             
             # Solve IK
-            arm_cmd = self._solve_ik(pre_pos, t_orn, full_body_q)
-            action[6:13] = arm_cmd
+            pose_cmd = self._solve_ik(pre_pos, t_orn, full_body_q)
+            action[2:13] = pose_cmd[2:13]
             
             # Check if we are there (Error < 2cm)
-            curr_pos = obs['qpos'][6:13] # Rough proxy, better to use FK
+            curr_pos = obs['qpos'][2:13] # Rough proxy, better to use FK
+            # Ideally use p.getLinkState for error check. 
+            # Simple Timer based transition for robustness:
+            self.timer += 1
+            if self.timer > 50: # Give it 50 steps (~0.2s)
+                self.timer = 0
+                self.state = "APPROACH_TABLE"
+        
+        elif self.state == "APPROACH_TABLE":
+            # Target: 15cm BEHIND the object
+            t_pos, t_orn = self.target_grasp
+            
+            # Calculate Approach Vector (Local X)
+            rot_mat = np.array(p.getMatrixFromQuaternion(t_orn)).reshape(3,3)
+            approach_vec = rot_mat[:, 0]
+            pre_pos = t_pos - (approach_vec * 0.20)
+            pre_pos[2] = pre_pos[2] + 0.5
+            
+            # Solve IK
+            pose_cmd = self._solve_ik(pre_pos, t_orn, full_body_q)
+            action[0] = pose_cmd[0]
+            action[2:13] = pose_cmd[2:13]
+            
+            # Check if we are there (Error < 2cm)
+            curr_pos = obs['qpos'][2:13] # Rough proxy, better to use FK
             # Ideally use p.getLinkState for error check. 
             # Simple Timer based transition for robustness:
             self.timer += 1
@@ -175,7 +156,7 @@ class AntiPodalGrasping:
             # 2. Define your Gripper Length
             # For Fetch, distance from Wrist Roll Link to Fingertips is approx 20cm (0.2m)
             # You may need to tune this: 0.18 to 0.22 is a common range.
-            gripper_length = 0.01
+            gripper_length = 0.09
             
             # 3. Calculate the Wrist Position
             # We "back up" from the banana center along the approach vector
@@ -185,8 +166,9 @@ class AntiPodalGrasping:
             p.loadURDF("assets/frame_marker/frame_marker_target.urdf", wrist_target_pos, t_orn, useFixedBase=True, globalScaling=0.25)
             
             # 5. Send THIS wrist position to IK, not the banana position
-            arm_cmd = self._solve_ik(wrist_target_pos, t_orn, full_body_q)
-            action[6:13] = arm_cmd
+            pose_cmd = self._solve_ik(wrist_target_pos, t_orn, full_body_q)
+            action[0] = pose_cmd[0]
+            action[2:13] = pose_cmd[2:13]
             
             self.timer += 1
             if self.timer > 50:
@@ -199,12 +181,13 @@ class AntiPodalGrasping:
             
             rot_mat = np.array(p.getMatrixFromQuaternion(t_orn)).reshape(3, 3)
             approach_vec = rot_mat[:, 0]
-            gripper_length = 0.01
+            gripper_length = 0.09
             
             wrist_target_pos = t_pos - (approach_vec * gripper_length)
             
-            arm_cmd = self._solve_ik(wrist_target_pos, t_orn, full_body_q)
-            action[6:13] = arm_cmd
+            pose_cmd = self._solve_ik(wrist_target_pos, t_orn, full_body_q)
+            action[0] = pose_cmd[0]
+            action[2:13] = pose_cmd[2:13]
             
             # COMMAND GRIPPER CLOSED
             gripper_cmd = 0.0
@@ -217,10 +200,11 @@ class AntiPodalGrasping:
         elif self.state == "LIFT":
             # Target: Grasp Pose + Z offset
             t_pos, t_orn = self.target_grasp
-            lift_pos = t_pos + np.array([0, 0, 0.2]) # Up 20cm
+            lift_pos = t_pos + np.array([0, 0, 0.4]) # Up 40cm
             
-            arm_cmd = self._solve_ik(lift_pos, t_orn, full_body_q)
-            action[6:13] = arm_cmd
+            pose_cmd = self._solve_ik(lift_pos, t_orn, full_body_q)
+            action[0] = pose_cmd[0]
+            action[2:13] = pose_cmd[2:13]
             
             # Keep Gripper Closed
             gripper_cmd = 0.0

@@ -124,10 +124,6 @@ class PickNavReachEnv:
         self.eef_id = link_names.index(eef_link_name)
         self.eef_marker = p.loadURDF("assets/frame_marker/frame_marker_target.urdf", [0,0,0], useFixedBase=True, globalScaling=0.25)
         print(f"End Effector Link ID: {self.eef_id}")
-        
-        # To make the fingers "sticky"
-        # p.changeDynamics(self.robot_id, 13, lateralFriction=2.0)
-        # p.changeDynamics(self.robot_id, 14, lateralFriction=2.0)
 
     def _load_object_table(self):
         p.setAdditionalSearchPath(pybullet_data.getDataPath()) 
@@ -276,13 +272,13 @@ class PickNavReachEnv:
         print("target: ", target)
 
         # Position control for all controllable joints
-        position_gains = np.array([3e-1] * len(self.joint_indices))
+        position_gains = np.array([0.1] * len(self.joint_indices))
         max_vels = np.array([1.5] * len(self.joint_indices))
         if (self.use_barret_hand):
             position_gains[-8:] = 0.05
             max_vels[-8:] = 0.1
         else:
-            position_gains[-2:] = 0.13
+            position_gains[-2:] = 0.1
             max_vels[-2:] = 0.1
         velocity_gains = np.zeros_like(position_gains) #np.sqrt(np.array(position_gains))
         p.setJointMotorControlArray(
@@ -398,7 +394,7 @@ class PickNavReachEnv:
         return obs, is_ready
 
 if __name__ == "__main__":
-    USE_BARRET_HAND = True
+    USE_BARRET_HAND = False
     
     # It will load the robot and the environment
     # Since we also want to modify the robot, we should change this one too.
@@ -412,7 +408,7 @@ if __name__ == "__main__":
     if (USE_BARRET_HAND):
         antipodal_controller = AntiPodalBarretGrasping(env.robot_id, range(0, 6), range(6,13), range(13, 21))
     else:
-        antipodal_controller = AntiPodalGrasping(env.robot_id, range(6,13), [13,14])
+        antipodal_controller = AntiPodalGrasping(env.robot_id, range(0, 2), range(2,13), [13,14])
     
     # for i in range (10000):
     import time
