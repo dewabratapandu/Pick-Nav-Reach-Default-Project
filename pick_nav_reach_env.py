@@ -94,7 +94,7 @@ class PickNavReachEnv:
             if "finger" in link_name:
                 # Lateral Friction = 1.0 (Rubber) to 2.0 (Sticky Tape)
                 # Spinning Friction helps prevent rotation slips
-                p.changeDynamics(self.robot_id, j, lateralFriction=4.0, spinningFriction=0.1)
+                p.changeDynamics(self.robot_id, j, lateralFriction=4.0, spinningFriction=0.8)
 
         self.joint_indices = indices
         self.joint_lower = np.array(lowers, dtype=np.float32)
@@ -408,7 +408,7 @@ if __name__ == "__main__":
     if (USE_BARRET_HAND):
         antipodal_controller = AntiPodalBarretGrasping(env.robot_id, range(0, 6), range(6,13), range(13, 21))
     else:
-        antipodal_controller = AntiPodalGrasping(env.robot_id, range(0, 2), range(2,13), [13,14])
+        antipodal_controller = AntiPodalGrasping(env.robot_id, range(0, 2), range(2,13), range(13,15))
     
     # for i in range (10000):
     import time

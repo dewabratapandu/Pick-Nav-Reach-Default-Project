@@ -29,6 +29,7 @@ class AntiPodalGrasping:
         self.state = "IDLE" 
         self.target_grasp = None # (pos, orn)
         self.timer = 0
+        self.gripper_length = self.calculate_dynamic_gripper_length()
         
         # Fixed Actions (Head looks down, Torso stays up)
         self.torso_height = 0.3
@@ -38,6 +39,42 @@ class AntiPodalGrasping:
         self.state = "IDLE"
         self.target_grasp = None
         self.timer = 0
+    
+    def calculate_dynamic_gripper_length(self):
+        """
+        Dynamically calculates the distance from the Palm (EE) 
+        to the center of the fingertips.
+        """        
+        # 1. Get Palm Position (World Frame)
+        # self.ee_index is the index of 'gripper_link' or 'wrist_roll_link'
+        palm_state = p.getLinkState(self.bot_id, self.ee_index)
+        palm_pos = np.array(palm_state[0])
+
+        # 2. Get Finger Positions
+        # self.gripper_indices usually contains [Left_Finger_Joint, Right_Finger_Joint]
+        # In PyBullet, Joint Index == Link Index for that joint.
+        f1_pos = np.array(p.getLinkState(self.bot_id, 21)[0]) # right finger
+        f2_pos = np.array(p.getLinkState(self.bot_id, 22)[0]) # left finger
+
+        # 3. Calculate Center of Fingertips
+        fingertip_center = (f1_pos + f2_pos) / 2.0
+
+        # 4. Calculate Distance (The TCP Offset)
+        # This is the base length from wrist to finger connection
+        base_length = np.linalg.norm(fingertip_center - palm_pos)
+        
+        # 5. Add a tiny bit for the physical length of the finger tip itself?
+        # Usually, the link origin is at the base of the finger. 
+        # You might want to add ~2-3cm to reach the "pads" of the finger.
+        # But this removes the guesswork of the main 15cm arm!
+        
+        # Check if it's too small (e.g. if indices are wrong)
+        if base_length < 0.01:
+            print("Warning: Dynamic Gripper Length seems too small!")
+            return 0.10 # Fallback default
+            
+        print(f"Dynamic Gripper Length Calculated: {base_length:.4f} meters")
+        return base_length
 
     def _solve_ik(self, target_pos, target_orn, current_joint_angles):
         """Internal helper to get arm angles for a target pose."""
@@ -78,7 +115,10 @@ class AntiPodalGrasping:
         # --- STATE MACHINE ---
         
         if self.state == "IDLE":
-            self.state = "CALCULATE"
+            self.timer += 1
+            if self.timer > 50: # Give it 50 steps (~0.2s)
+                self.timer = 0
+                self.state = "CALCULATE"
 
         elif self.state == "CALCULATE":
             # Run the Antipodal Sampling Logic
@@ -152,15 +192,10 @@ class AntiPodalGrasping:
             # 1. Get the Approach Vector (Red Axis / X-Axis) from the quaternion
             rot_mat = np.array(p.getMatrixFromQuaternion(t_orn)).reshape(3, 3)
             approach_vec = rot_mat[:, 0]  # Column 0 is X (Forward)
-
-            # 2. Define your Gripper Length
-            # For Fetch, distance from Wrist Roll Link to Fingertips is approx 20cm (0.2m)
-            # You may need to tune this: 0.18 to 0.22 is a common range.
-            gripper_length = 0.09
             
             # 3. Calculate the Wrist Position
             # We "back up" from the banana center along the approach vector
-            wrist_target_pos = t_pos - (approach_vec * gripper_length)
+            wrist_target_pos = t_pos - (approach_vec * self.gripper_length)
 
             # 4. Visualize for debugging (Draw a line from Banana to Wrist)
             p.loadURDF("assets/frame_marker/frame_marker_target.urdf", wrist_target_pos, t_orn, useFixedBase=True, globalScaling=0.25)
@@ -181,9 +216,7 @@ class AntiPodalGrasping:
             
             rot_mat = np.array(p.getMatrixFromQuaternion(t_orn)).reshape(3, 3)
             approach_vec = rot_mat[:, 0]
-            gripper_length = 0.09
-            
-            wrist_target_pos = t_pos - (approach_vec * gripper_length)
+            wrist_target_pos = t_pos - (approach_vec * self.gripper_length)
             
             pose_cmd = self._solve_ik(wrist_target_pos, t_orn, full_body_q)
             action[0] = pose_cmd[0]
