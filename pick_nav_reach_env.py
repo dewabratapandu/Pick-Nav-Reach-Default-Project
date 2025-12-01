@@ -94,7 +94,7 @@ class PickNavReachEnv:
             if "finger" in link_name:
                 # Lateral Friction = 1.0 (Rubber) to 2.0 (Sticky Tape)
                 # Spinning Friction helps prevent rotation slips
-                p.changeDynamics(self.robot_id, j, lateralFriction=4.0, spinningFriction=0.8)
+                p.changeDynamics(self.robot_id, j, lateralFriction=4.0, spinningFriction=0.1)
 
         self.joint_indices = indices
         self.joint_lower = np.array(lowers, dtype=np.float32)
@@ -394,7 +394,7 @@ class PickNavReachEnv:
         return obs, is_ready
 
 if __name__ == "__main__":
-    USE_BARRET_HAND = False
+    USE_BARRET_HAND = True
     
     # It will load the robot and the environment
     # Since we also want to modify the robot, we should change this one too.
@@ -406,7 +406,7 @@ if __name__ == "__main__":
     # There are 15 units of action we should control. Check keyboard-action-readme.md!
     keyboard_controller = KeyBoardController(env, use_barret_hand=USE_BARRET_HAND)
     if (USE_BARRET_HAND):
-        antipodal_controller = AntiPodalBarretGrasping(env.robot_id, range(0, 6), range(6,13), range(13, 21))
+        antipodal_controller = AntiPodalBarretGrasping(env.robot_id, range(0, 2), range(2,13), range(13, 21))
     else:
         antipodal_controller = AntiPodalGrasping(env.robot_id, range(0, 2), range(2,13), range(13,15))
     

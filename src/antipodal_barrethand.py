@@ -29,18 +29,55 @@ class AntiPodalBarretGrasping:
         
         # State Machine Variables
         self.smoothed_arm_cmd = None
-        self.state = "APPROACH_TABLE" 
+        self.state = "IDLE" 
         self.target_grasp = None # (pos, orn)
         self.timer = 0
+        # self.gripper_length = self.calculate_dynamic_gripper_length()
+        self.gripper_length = 0.34
         
         # Fixed Actions (Head looks down, Torso stays up)
-        self.torso_height = 0.5
+        self.torso_height = 0.3
         self.head_tilt = 0.6 
+        self.action_xy = [0.0, 0.0]
 
     def reset(self):
-        self.state = "APPROACH_TABLE"
+        self.state = "IDLE"
         self.target_grasp = None
         self.timer = 0
+    
+    def calculate_dynamic_gripper_length(self):
+        """
+        Dynamically calculates the distance from the Palm (EE) 
+        to the center of the fingertips.
+        """        
+        # 1. Get Palm Position (World Frame)
+        # self.ee_index is the index of 'gripper_link' or 'wrist_roll_link'
+        palm_state = p.getLinkState(self.bot_id, self.ee_index)
+        palm_pos = np.array(palm_state[0])
+
+        # 2. Get Finger Positions
+        # self.gripper_indices usually contains [Left_Finger_Joint, Right_Finger_Joint]
+        # In PyBullet, Joint Index == Link Index for that joint.
+        f1_pos = np.array(p.getLinkState(self.bot_id, 23)[0]) # finger 1
+        f2_pos = np.array(p.getLinkState(self.bot_id, 27)[0]) # finger 2
+        f3_pos = np.array(p.getLinkState(self.bot_id, 32)[0]) # finger 3
+
+        # 3. Calculate Distance (The TCP Offset)
+        # This is the base length from wrist to finger connection
+        f1_length = np.linalg.norm(f1_pos - palm_pos)
+        f2_length = np.linalg.norm(f2_pos - palm_pos)
+        f3_length = np.linalg.norm(f3_pos - palm_pos)
+        
+        # 4. Calculate base length
+        base_length = (f1_length + f2_length + f3_length) / 3.0
+        
+        # Check if it's too small (e.g. if indices are wrong)
+        if base_length < 0.01:
+            print("Warning: Dynamic Gripper Length seems too small!")
+            return 0.10 # Fallback default
+            
+        print(f"Dynamic Gripper Length Calculated: {base_length:.4f} meters")
+        return base_length
 
     def _solve_ik(self, target_pos, target_orn, current_joint_angles):
         """Internal helper to get arm angles for a target pose."""
@@ -56,39 +93,7 @@ class AntiPodalBarretGrasping:
             residualThreshold=1e-7  # DECREASE THIS (Require higher precision)
         )
         
-        # Map the huge list of all joints to just the arm joints we control.
-        # Note: This slicing depends on your specific robot setup.
-        # Assuming IK returns all movable joints in order.
-        # You might need to adjust this slice based on your specific robot index list!
-        # Standard Fetch mapping usually aligns well if arm_indices are contiguous.
-        
-        # Create a dictionary or list map if indices are non-contiguous
-        arm_solutions = []
-        for i, idx in enumerate(self.arm_indices):
-            # Safe mapping: Check the length
-            if idx < len(joint_poses):
-                arm_solutions.append(joint_poses[idx])
-            else:
-                # Fallback if mapping fails (shouldn't happen on standard Fetch)
-                arm_solutions.append(0.0)
-        
-        return arm_solutions
-    
-    def smooth_action(self, current_arm_q, arm_cmd):
-        # 1. On the very first run, initialize the smoother to current position
-        if self.smoothed_arm_cmd is None:
-            self.smoothed_arm_cmd = np.array(current_arm_q)
-
-        # 2. Calculate the difference between "Where I am" and "Where I want to be"
-        diff = np.array(arm_cmd) - self.smoothed_arm_cmd
-
-        # 3. Limit the speed! (Max 0.05 radians per step)
-        # This prevents the "Explosive" jump.
-        step_size = 0.05 
-        diff = np.clip(diff, -step_size, step_size)
-
-        # 4. Update the smoothed command
-        self.smoothed_arm_cmd += diff
+        return joint_poses
 
     def get_action(self, obs):
         """
@@ -102,12 +107,6 @@ class AntiPodalBarretGrasping:
         
         # 1. Initialize Action Array (21 DoF)
         action = np.zeros(21)
-        
-        # 2. Set Defaults (Base stops, Torso up, Head down)
-        # action[0:3] = obs['qpos'][0:3] # Hold current base position (don't drift)
-        action[0] = 1.3 # table pos, need to have a better calcuclation
-        action[3] = self.torso_height
-        action[5] = self.head_tilt
         
         idx_spread = 15 # bh_11
         idx_f1 = 13 # bh_32
@@ -133,7 +132,7 @@ class AntiPodalBarretGrasping:
 
         # --- STATE MACHINE ---
         
-        if self.state == "APPROACH_TABLE":
+        if self.state == "IDLE":
             self.timer += 1
             if self.timer > 50: # Give it 50 steps (~0.2s)
                 self.timer = 0
@@ -155,7 +154,7 @@ class AntiPodalBarretGrasping:
                 print("No grasp found, retrying...")
                 # Stay in CALCULATE or fail
             
-            action[6:13] = current_arm_q # Hold
+            action[2:13] = current_arm_q # Hold
 
         elif self.state == "APPROACH_PRE":
             # Target: 15cm BEHIND the object
@@ -164,13 +163,13 @@ class AntiPodalBarretGrasping:
             # Calculate Approach Vector (Local X)
             rot_mat = np.array(p.getMatrixFromQuaternion(t_orn)).reshape(3,3)
             approach_vec = rot_mat[:, 0]
-            pre_pos = t_pos - (approach_vec * 0.20)
+            pre_pos = t_pos - (approach_vec * self.gripper_length)
             pre_pos[2] = pre_pos[2] + 0.4
             p.loadURDF("assets/frame_marker/frame_marker_target.urdf", pre_pos, t_orn, useFixedBase=True, globalScaling=0.25)
             
             # Solve IK
-            arm_cmd = self._solve_ik(pre_pos, t_orn, full_body_q)
-            action[6:13] = arm_cmd
+            pose_cmd = self._solve_ik(pre_pos, t_orn, full_body_q)
+            action[2:13] = pose_cmd[2:13]
             
             # Check if we are there (Error < 2cm)
             curr_pos = obs['qpos'][6:13] # Rough proxy, better to use FK
@@ -178,6 +177,30 @@ class AntiPodalBarretGrasping:
             # Simple Timer based transition for robustness:
             self.timer += 1
             if self.timer > 100: # Give it 50 steps (~0.2s)
+                self.timer = 0
+                self.state = "APPROACH_TABLE"
+        
+        elif self.state == "APPROACH_TABLE":
+            # Target: 15cm BEHIND the object
+            t_pos, t_orn = self.target_grasp
+            
+            # Calculate Approach Vector (Local X)
+            rot_mat = np.array(p.getMatrixFromQuaternion(t_orn)).reshape(3,3)
+            approach_vec = rot_mat[:, 0]
+            pre_pos = t_pos - (approach_vec * self.gripper_length)
+            pre_pos[2] = pre_pos[2] + 0.4
+            
+            # Solve IK
+            pose_cmd = self._solve_ik(pre_pos, t_orn, full_body_q)
+            action[0] = pose_cmd[0]
+            action[2:13] = pose_cmd[2:13]
+            
+            # Check if we are there (Error < 2cm)
+            curr_pos = obs['qpos'][2:13] # Rough proxy, better to use FK
+            # Ideally use p.getLinkState for error check. 
+            # Simple Timer based transition for robustness:
+            self.timer += 1
+            if self.timer > 50: # Give it 50 steps (~0.2s)
                 self.timer = 0
                 self.state = "APPROACH_FINAL"
         
@@ -187,22 +210,18 @@ class AntiPodalBarretGrasping:
             # 1. Get the Approach Vector (Red Axis / X-Axis) from the quaternion
             rot_mat = np.array(p.getMatrixFromQuaternion(t_orn)).reshape(3, 3)
             approach_vec = rot_mat[:, 0]  # Column 0 is X (Forward)
-
-            # 2. Define your Gripper Length
-            # For Fetch, distance from Wrist Roll Link to Fingertips is approx 20cm (0.2m)
-            # You may need to tune this: 0.18 to 0.22 is a common range.
-            gripper_length = 0.35
             
             # 3. Calculate the Wrist Position
             # We "back up" from the banana center along the approach vector
-            wrist_target_pos = t_pos - (approach_vec * gripper_length)
+            wrist_target_pos = t_pos - (approach_vec * self.gripper_length)
 
             # 4. Visualize for debugging (Draw a line from Banana to Wrist)
             p.loadURDF("assets/frame_marker/frame_marker_target.urdf", wrist_target_pos, t_orn, useFixedBase=True, globalScaling=0.25)
             
             # 5. Send THIS wrist position to IK, not the banana position
-            arm_cmd = self._solve_ik(wrist_target_pos, t_orn, full_body_q)
-            action[6:13] = arm_cmd
+            pose_cmd = self._solve_ik(wrist_target_pos, t_orn, full_body_q)
+            action[:13] = pose_cmd[:13]
+            self.action_xy = pose_cmd[0:2]
             
             self.timer += 1
             if self.timer > 100:
@@ -215,12 +234,12 @@ class AntiPodalBarretGrasping:
             
             rot_mat = np.array(p.getMatrixFromQuaternion(t_orn)).reshape(3, 3)
             approach_vec = rot_mat[:, 0]
-            gripper_length = 0.35
             
-            wrist_target_pos = t_pos - (approach_vec * gripper_length)
+            wrist_target_pos = t_pos - (approach_vec * self.gripper_length)
             
-            arm_cmd = self._solve_ik(wrist_target_pos, t_orn, full_body_q)
-            action[6:13] = arm_cmd
+            pose_cmd = self._solve_ik(wrist_target_pos, t_orn, full_body_q)
+            action[0:2] = self.action_xy
+            action[2:13] = pose_cmd[2:13]
             
             # COMMAND GRIPPER CLOSED
             action[13] = 2
@@ -237,8 +256,9 @@ class AntiPodalBarretGrasping:
             t_pos, t_orn = self.target_grasp
             lift_pos = t_pos + np.array([0, 0, 0.5]) # Up 50cm
             
-            arm_cmd = self._solve_ik(lift_pos, t_orn, full_body_q)
-            action[6:13] = arm_cmd
+            pose_cmd = self._solve_ik(lift_pos, t_orn, full_body_q)
+            action[0:2] = self.action_xy
+            action[2:13] = pose_cmd[2:13]
             
             action[13] = 2
             action[16] = 2
