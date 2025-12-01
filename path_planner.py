@@ -159,12 +159,125 @@ class PathPlanner:
 
         path.reverse()  # from start → goal
 
-        dummy_path = path.copy()
-        dummy_path = self.grid_to_world(dummy_path)
-        #base shift path with respect to the robot init position
-        #TODO: clean up
-        path = self._base_shift_path(path, start)
-        return dummy_path
+        output_path = self.grid_to_world(path)
+        return output_path
+
+    def astar_2d(self, start_rc, goal_rc, allow_diagonal=False):
+        """
+        Compute shortest path on a 2D occupancy grid using A* search.
+
+        Uses:
+          - Manhattan heuristic for 4-connected grid
+          - Euclidean-like heuristic for 8-connected grid
+
+        Assumes:
+          self.occupancy_grid: 2D np.ndarray
+            0 = free cell, non-zero = obstacle
+
+        Parameters
+        ----------
+        start_rc : tuple (row, col)
+            Robot start cell in grid coordinates.
+        goal_rc : tuple (row, col)
+            Goal cell in grid coordinates.
+        allow_diagonal : bool
+            If True, allow 8-connected neighbors; otherwise 4-connected.
+
+        Returns
+        -------
+        path : list of (row, col)
+            Shortest path from start to goal, including both.
+            Empty list if no path exists.
+        """
+        grid = self.occupancy_map
+        rows, cols = grid.shape
+
+        # rebasing start and goal
+        start = self._normalize_xy(start_rc[0], start_rc[1])
+        goal = self._normalize_xy(goal_rc[0], goal_rc[1])
+
+        def in_bounds(r, c):
+            return 0 <= r < rows and 0 <= c < cols
+
+        def is_free(r, c):
+            # 0 = free, anything else = obstacle
+            return grid[r, c] == 0
+
+        # 4- or 8-connected neighbors
+        neighbors_4 = [(-1, 0), (1, 0), (0, -1), (0, 1)]
+        neighbors_8 = neighbors_4 + [(-1, -1), (-1, 1), (1, -1), (1, 1)]
+        neighbors = neighbors_8 if allow_diagonal else neighbors_4
+
+        # Heuristic: Manhattan for 4-connected, octile for 8-connected
+        def heuristic(r, c, gr, gc):
+            dr = abs(r - gr)
+            dc = abs(c - gc)
+            if not allow_diagonal:
+                # Manhattan distance
+                return dr + dc
+            # Octile distance (good for 8-connected grids)
+            d_min = min(dr, dc)
+            d_max = max(dr, dc)
+            return (math.sqrt(2) * d_min) + (d_max - d_min)
+
+        # Start/Goal must be in bounds and free
+        if not (in_bounds(*start) and in_bounds(*goal)):
+            return []
+        if not (is_free(*start) and is_free(*goal)):
+            return []
+
+        # g: cost from start to this node
+        g_score = np.full((rows, cols), np.inf, dtype=float)
+        g_score[start] = 0.0
+
+        # For path reconstruction
+        came_from = [[None] * cols for _ in range(rows)]
+
+        # Priority queue: (f_score, (r, c))
+        open_heap = []
+        start_h = heuristic(start[0], start[1], goal[0], goal[1])
+        heapq.heappush(open_heap, (start_h, start))
+
+        while open_heap:
+            current_f, (r, c) = heapq.heappop(open_heap)
+
+            # If we've reached the goal, stop
+            if (r, c) == goal:
+                break
+
+            # If this is an outdated entry, skip
+            if current_f > g_score[r, c] + heuristic(r, c, goal[0], goal[1]):
+                continue
+
+            for dr, dc in neighbors:
+                nr, nc = r + dr, c + dc
+                if not in_bounds(nr, nc) or not is_free(nr, nc):
+                    continue
+
+                # Cost to move: 1 for straight, sqrt(2) for diagonal
+                step_cost = 1.0 if (dr == 0 or dc == 0) else math.sqrt(2)
+                tentative_g = g_score[r, c] + step_cost
+
+                if tentative_g < g_score[nr, nc]:
+                    g_score[nr, nc] = tentative_g
+                    came_from[nr][nc] = (r, c)
+                    f_score = tentative_g + heuristic(nr, nc, goal[0], goal[1])
+                    heapq.heappush(open_heap, (f_score, (nr, nc)))
+
+        # Reconstruct path
+        if not np.isfinite(g_score[goal]):
+            return []
+
+        path = []
+        cur = goal
+        while cur is not None:
+            cr, cc = cur
+            path.append((int(cr), int(cc)))
+            cur = came_from[int(cr)][int(cc)]
+        path.reverse()
+        path = self.grid_to_world(path)
+        print(f"A-star path: {path}")
+        return path
 
     def follow_path(self, path, curr_idx, curr_robot_pos, starting_offset, waypoint_tol=0.02):
 
@@ -224,15 +337,7 @@ class PathPlanner:
         y = y + offset
         return (x,y)
 
-    # base shift using start position of the base
-
-    def _base_shift_path(self, path, start_pos):
-        for i in range(len(path)):
-            x = path[i][0] - start_pos[0]
-            y = path[i][1] - start_pos[1]
-            path[i] = (x,y)
-        return path
-
+    #convert back to wrt actual pyworld center
     def grid_to_world(self, path):
         for i in range(len(path)):
             offset = self.cell_side_size/2
@@ -244,8 +349,6 @@ class PathPlanner:
     #TODO: replace the other inline func
     def is_in_bounds(self, r, c):
         return 0 <= r < self.n_rows and 0 <= c < self.n_cols
-
-
 
 #move to utils
 def get_full_robot_aabb(robot_id):

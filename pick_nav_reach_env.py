@@ -18,7 +18,8 @@ class PickNavReachEnv:
                  seed=0,
                  object_idx=5,
                  use_barret_hand=False,
-                 use_rl_grasping=False):
+                 use_rl_grasping=False,
+                 use_astar=False):
         self.set_seed(seed)
 
         self.pb_physics_client = p.connect(p.GUI) #change for training to p.DIRECT
@@ -34,6 +35,7 @@ class PickNavReachEnv:
         self.object_idx = object_idx
         self.use_barret_hand = use_barret_hand
         self.use_rl_grasping = use_rl_grasping
+        self.use_astar = use_astar
         
         self.action_scale = 0.05
         self.max_force = 2000000
@@ -382,7 +384,7 @@ if __name__ == "__main__":
     
     # It will load the robot and the environment
     # Since we also want to modify the robot, we should change this one too.
-    env = PickNavReachEnv(seed=42, use_barret_hand=USE_BARRET_HAND)
+    env = PickNavReachEnv(seed=42, use_barret_hand=USE_BARRET_HAND, use_astar=True)
     env.reset()
     print(f"Action size: {env.action_size}, Obs size: {env.obs_size}")
     
@@ -391,6 +393,7 @@ if __name__ == "__main__":
     keyboard_controller = KeyBoardController(env, use_barret_hand=USE_BARRET_HAND)
 
     #TODO: pick the object
+
 
     #tuck robot arm to minimize space
     qpos, _, _, _ = env._get_state()
@@ -418,7 +421,13 @@ if __name__ == "__main__":
     #actual robot position is xy-values from the robot base
     robot_x = round(robot_pos[0] + qpos[0], 2)
     robot_y = round(robot_pos[1] + qpos[1], 2)
-    path = pp.dijkstra_2d((robot_x, robot_y), (env.goal_pos[0], env.goal_pos[1]))
+
+    path = []
+    if env.use_astar:
+        path = pp.astar_2d((robot_x, robot_y), (env.goal_pos[0], env.goal_pos[1]))
+    else:
+        path = pp.dijkstra_2d((robot_x, robot_y), (env.goal_pos[0], env.goal_pos[1]))
+
     print(f"Path to be taken: {path}")
 
     #move the robot along the path
