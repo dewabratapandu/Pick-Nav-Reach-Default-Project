@@ -5,15 +5,15 @@ import pybullet as p
 
 
 class PathPlanner:
-    def __init__(self, maze_info, n_rows, n_cols, cell_side_size = 1, robot_buffer_radius = 0):
+    def __init__(self, maze_info, n_rows, n_cols, cell_side_size = 1, robot_buffer_radius = 0, table_aabb = ()):
         self.cell_side_size = cell_side_size
         self.n_rows = np.floor(n_rows/cell_side_size).astype(int)
         self.n_cols = np.floor(n_cols/cell_side_size).astype(int)
         self.min_x = 0
         self.min_y = 0
         self.maze_info = maze_info
-        self.robot_buffer_cells = np.floor(robot_buffer_radius/cell_side_size).astype(int)
-        print(f"Robot Buffer: {self.robot_buffer_cells}")
+        self.table_aabb = table_aabb
+        self.robot_buffer_cells = np.ceil(robot_buffer_radius/cell_side_size).astype(int)
         self.occupancy_map = np.zeros((self.n_rows, self.n_cols), dtype=np.uint8)
 
     def generate_map(self):
@@ -31,10 +31,6 @@ class PathPlanner:
             if y < min_y:
                 min_y = y
 
-        #rounding the value
-        #min_x = np.floor(min_x).astype(int)
-        #min_y = np.floor(min_y).astype(int)
-
         self.min_x = np.floor(min_x)
         self.min_y = np.floor(min_y)
 
@@ -49,6 +45,22 @@ class PathPlanner:
                         continue
                     self.occupancy_map[i][j] = 1
 
+        #add table info in map
+        if len(self.table_aabb) == 2:
+            #rebase with min x & y values
+            t_min_x = np.floor((self.table_aabb[0][0] - self.min_x)/self.cell_side_size).astype(int)
+            t_max_x = np.floor((self.table_aabb[1][0] - self.min_x)/self.cell_side_size).astype(int)
+
+            t_min_y = np.floor((self.table_aabb[0][1] - self.min_y)/self.cell_side_size).astype(int)
+            t_max_y = np.floor((self.table_aabb[1][1] - self.min_y)/self.cell_side_size).astype(int)
+            print(f"Env min_x: {self.min_x} | Env min_y: {self.min_y}")
+            print(f"Table AABB: {self.table_aabb} | t_min_x: {t_min_x} | t_max_x: {t_max_x} | t_min_y: {t_min_y} | t_max_y: {t_max_y}")
+
+            for i in range(t_min_x - self.robot_buffer_cells, t_max_x + self.robot_buffer_cells + 1):
+                for j in range(t_min_y - self.robot_buffer_cells, t_max_y + self.robot_buffer_cells + 1):
+                    if not self.is_in_bounds(i, j):
+                        continue
+                    self.occupancy_map[i][j] = 1
         print(f"occupancy map: {self.occupancy_map.tolist()}")
 
     def dijkstra_2d(self, start_rc, goal_rc, allow_diagonal=False):
