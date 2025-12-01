@@ -113,7 +113,7 @@ class PickNavReachEnv:
 
     def _load_object_table(self):
         p.setAdditionalSearchPath(pybullet_data.getDataPath()) 
-        p.loadURDF("table/table.urdf", baseOrientation=p.getQuaternionFromEuler([0,0,np.pi/2]), useFixedBase=1)
+        self.table_id = p.loadURDF("table/table.urdf", baseOrientation=p.getQuaternionFromEuler([0,0,np.pi/2]), useFixedBase=1)
 
         # hyperparameters
         ycb_object_dir_path = "./assets/ycb_objects/"
@@ -397,10 +397,13 @@ if __name__ == "__main__":
     robot_radius = footprint[1] / 2
 
     #calculate map
-    pp = path_planner.PathPlanner(env.cube_positions, 22, 12, 0.2, robot_radius)
+    cell_side_size = 0.2
+    table_aabb_min, table_aabb_max = p.getAABB(env.table_id, physicsClientId=env.pb_physics_client)
+    pp = path_planner.PathPlanner(env.cube_positions, 22, 12, cell_side_size, robot_radius, (table_aabb_min, table_aabb_max))
     pp.generate_map()
 
     # calculate path
+    #TODO: maybe this doesn't change so calculate start stop from the joint position relative to start position
     robot_pos, _ = p.getBasePositionAndOrientation(env.robot_id, env.pb_physics_client)
     path = pp.dijkstra_2d((robot_pos[0],robot_pos[1]), (env.goal_pos[0], env.goal_pos[1]))
     print(f"Path to be taken: {path}")
