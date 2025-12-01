@@ -403,9 +403,12 @@ if __name__ == "__main__":
     pp.generate_map()
 
     # calculate path
-    #TODO: maybe this doesn't change so calculate start stop from the joint position relative to start position
     robot_pos, _ = p.getBasePositionAndOrientation(env.robot_id, env.pb_physics_client)
-    path = pp.dijkstra_2d((robot_pos[0],robot_pos[1]), (env.goal_pos[0], env.goal_pos[1]))
+    qpos, _, _, _ = env._get_state()
+    #actual robot position is xy-values from the robot base
+    robot_x = round(robot_pos[0] + qpos[0], 2)
+    robot_y = round(robot_pos[1] + qpos[1], 2)
+    path = pp.dijkstra_2d((robot_x, robot_y), (env.goal_pos[0], env.goal_pos[1]))
     print(f"Path to be taken: {path}")
 
     #move the robot along the path
