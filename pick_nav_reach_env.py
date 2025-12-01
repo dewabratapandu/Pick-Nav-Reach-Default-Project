@@ -11,17 +11,20 @@ from copy import deepcopy
 from src.antipodal import AntiPodalGrasping
 from src.antipodal_barrethand import AntiPodalBarretGrasping
 from keyboard_control import KeyBoardController
-from utils import closest_joint_values
+from utils import closest_joint_values, tuck_arm
+import path_planner as path_planner
+import time
 
 class PickNavReachEnv:
 
     def __init__(self, 
                  seed=0,
                  object_idx=5,
-                 use_barret_hand=True):
+                 use_barret_hand=False,
+                 use_rl_grasping=False):
         self.set_seed(seed)
 
-        self.pb_physics_client = p.connect(p.GUI)
+        self.pb_physics_client = p.connect(p.GUI) #change for training to p.DIRECT
         p.setAdditionalSearchPath(pybullet_data.getDataPath()) 
         p.setGravity(0,0,-9.8)
 
@@ -33,6 +36,7 @@ class PickNavReachEnv:
         self.seed = seed
         self.object_idx = object_idx
         self.use_barret_hand = use_barret_hand
+        self.use_rl_grasping = use_rl_grasping
         
         self.action_scale = 0.05
         self.max_force = 2000000
@@ -74,7 +78,7 @@ class PickNavReachEnv:
         # Collect joint info (skip fixed)
         n_joints = p.getNumJoints(self.robot_id)
         indices, link_names = [], []
-        lowers, uppers, ranges, rest = [], [], [], []
+        lowers, uppers, ranges, rest, name_to_id = [], [], [], [], {}
 
         for j in range(n_joints):
             info = p.getJointInfo(self.robot_id, j)
@@ -87,6 +91,7 @@ class PickNavReachEnv:
                 uppers.append(info[9])
                 ranges.append(info[9] - info[8])
                 rest.append(info[10])  # joint damping? (PyBullet packs different things; we keep a placeholder)
+                name_to_id[info[1].decode("utf-8")] = j
 
                 p.setJointMotorControl2(
                     self.robot_id, j, p.VELOCITY_CONTROL, force=0.0,
@@ -101,6 +106,7 @@ class PickNavReachEnv:
         self.joint_upper = np.array(uppers, dtype=np.float32)
         self.joint_ranges = np.array(ranges, dtype=np.float32)
         self.rest_poses = np.zeros_like(self.joint_lower, dtype=np.float32)
+        self.joint_name_to_id = name_to_id
         
         # self.joint_lower[self.joint_upper==-1] = -np.inf
         # self.joint_upper[self.joint_upper==-1] = np.inf
@@ -127,7 +133,7 @@ class PickNavReachEnv:
 
     def _load_object_table(self):
         p.setAdditionalSearchPath(pybullet_data.getDataPath()) 
-        p.loadURDF("table/table.urdf", baseOrientation=p.getQuaternionFromEuler([0,0,np.pi/2]), useFixedBase=1)
+        self.table_id = p.loadURDF("table/table.urdf", baseOrientation=p.getQuaternionFromEuler([0,0,np.pi/2]), useFixedBase=1)
 
         # hyperparameters
         ycb_object_dir_path = "./assets/ycb_objects/"
@@ -394,7 +400,7 @@ class PickNavReachEnv:
         return obs, is_ready
 
 if __name__ == "__main__":
-    USE_BARRET_HAND = True
+    USE_BARRET_HAND = False
     
     # It will load the robot and the environment
     # Since we also want to modify the robot, we should change this one too.
@@ -405,24 +411,64 @@ if __name__ == "__main__":
     # This is the main part we should replace.
     # There are 15 units of action we should control. Check keyboard-action-readme.md!
     keyboard_controller = KeyBoardController(env, use_barret_hand=USE_BARRET_HAND)
-    if (USE_BARRET_HAND):
-        antipodal_controller = AntiPodalBarretGrasping(env.robot_id, range(0, 2), range(2,13), range(13, 21))
-    else:
-        antipodal_controller = AntiPodalGrasping(env.robot_id, range(0, 2), range(2,13), range(13,15))
-    
-    # for i in range (10000):
-    import time
+
+    #TODO: pick the object
+
+    #tuck robot arm to minimize space
+    qpos, _, _, _ = env._get_state()
+    tuck_arm_pos = tuck_arm(qpos, env.joint_name_to_id, env.joint_indices)
+    _, _ = env.step(tuck_arm_pos) #move the arm
+    p.stepSimulation()
+    time.sleep(1. / 240.)
+
+    #calculate robot footprint
+    footprint = path_planner.get_robot_footprint(env.robot_id)
+    print(f"footprint: {footprint}")
+
+    #using width and depth for radius
+    robot_radius = footprint[1] / 2
+
+    #calculate map
+    cell_side_size = 0.2
+    table_aabb_min, table_aabb_max = p.getAABB(env.table_id, physicsClientId=env.pb_physics_client)
+    pp = path_planner.PathPlanner(env.cube_positions, 22, 12, cell_side_size, robot_radius, (table_aabb_min, table_aabb_max))
+    pp.generate_map()
+
+    # calculate path
+    robot_pos, _ = p.getBasePositionAndOrientation(env.robot_id, env.pb_physics_client)
+    qpos, _, _, _ = env._get_state()
+    #actual robot position is xy-values from the robot base
+    robot_x = round(robot_pos[0] + qpos[0], 2)
+    robot_y = round(robot_pos[1] + qpos[1], 2)
+    path = pp.dijkstra_2d((robot_x, robot_y), (env.goal_pos[0], env.goal_pos[1]))
+    print(f"Path to be taken: {path}")
+
+    #move the robot along the path
+    path_idx = 0
     while True:
         obs, is_ready = env.is_object_ready()
         
         # random_action = np.random.uniform(-1.0, 1.0, size=(env.action_size,))
         # action = keyboard_controller.get_action()
-        action = antipodal_controller.get_action(obs)
-        obs, info = env.step(action)
-        for k, v in info.items():
-            print(f"{k}: {v}")
-        # p.stepSimulation()
-        # time.sleep(1./240.)
+        qpos, _, _, _ = env._get_state()
+
+        updated_pos, path_idx, is_complete = pp.follow_path(path, path_idx, qpos, (robot_pos[0], robot_pos[1]))
+        if not is_complete:
+            #keep arm locked in-position
+            action = tuck_arm_pos.copy()
+            #updating base positions
+            action[0] = updated_pos[0]
+            action[1] = updated_pos[1]
+            action[2] = updated_pos[2]
+            #TODO: keep the grasp also in locked position
+            obs, info = env.step(action)
+            # for k, v in info.items():
+            #    print(f"{k}: {v}")
+            p.stepSimulation()
+        else:
+            print("Path complete")
+        time.sleep(1. / 240.)
+
 
         # Visualize current EEF frame
         # eef_marker = p.loadURDF("assets/frame_marker/frame_marker_target.urdf", [0,0,0],
