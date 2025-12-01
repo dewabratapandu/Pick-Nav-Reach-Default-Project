@@ -412,8 +412,22 @@ if __name__ == "__main__":
     # There are 15 units of action we should control. Check keyboard-action-readme.md!
     keyboard_controller = KeyBoardController(env, use_barret_hand=USE_BARRET_HAND)
 
-    #TODO: pick the object
+    #### STEP 1: PICK THE OBJECT ####
+    if (USE_BARRET_HAND):
+        antipodal_controller = AntiPodalBarretGrasping(env.robot_id, range(0, 2), range(2,13), range(13, 21))
+    else:
+        antipodal_controller = AntiPodalGrasping(env.robot_id, range(0, 2), range(2,13), range(13,15))
 
+    pick_success = False
+    while not pick_success:
+        obs, is_ready = env.is_object_ready()
+        action = antipodal_controller.get_action(obs)
+        obs, info = env.step(action)
+        if (antipodal_controller.state == "DONE"):
+            pick_success = True
+    
+    #### STEP 2: NAVIGATE ####
+    
     #tuck robot arm to minimize space
     qpos, _, _, _ = env._get_state()
     tuck_arm_pos = tuck_arm(qpos, env.joint_name_to_id, env.joint_indices)

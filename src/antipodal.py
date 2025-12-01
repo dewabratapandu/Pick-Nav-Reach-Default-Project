@@ -29,7 +29,7 @@ class AntiPodalGrasping:
         self.state = "IDLE" 
         self.target_grasp = None # (pos, orn)
         self.timer = 0
-        self.gripper_length = self.calculate_dynamic_gripper_length()
+        self.gripper_length = self.calculate_dynamic_gripper_length() + 0.005
         
         # Fixed Actions (Head looks down, Torso stays up)
         self.torso_height = 0.3
@@ -239,16 +239,18 @@ class AntiPodalGrasping:
             lift_pos = t_pos + np.array([0, 0, 0.4]) # Up 40cm
             
             pose_cmd = self._solve_ik(lift_pos, t_orn, full_body_q)
-            action[0:2] = self.action_xy
+            # action[0:2] = [0.0, 0.0]
             action[2:13] = pose_cmd[2:13]
             
             # Keep Gripper Closed
             gripper_cmd = 0.0
             
             # End condition
-            if obs['object_pos'][2] > (self.table_height + 0.05): # If object is off table
+            self.timer += 1
+            is_picked = obs['object_pos'][2] > (self.table_height + 0.05)
+            if self.timer > 50 and is_picked: # If object is off table
                 print("Pick Success!")
-                # self.state = "DONE" # Or handle next logic
+                self.state = "DONE" # Or handle next logic
 
         # 3. Apply Gripper Command
         action[13] = gripper_cmd

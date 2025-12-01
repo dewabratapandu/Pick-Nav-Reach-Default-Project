@@ -257,7 +257,7 @@ class AntiPodalBarretGrasping:
             lift_pos = t_pos + np.array([0, 0, 0.5]) # Up 50cm
             
             pose_cmd = self._solve_ik(lift_pos, t_orn, full_body_q)
-            action[0:2] = self.action_xy
+            # action[0:2] = self.action_xy
             action[2:13] = pose_cmd[2:13]
             
             action[13] = 2
@@ -265,9 +265,11 @@ class AntiPodalBarretGrasping:
             action[19] = 2
             
             # End condition
-            if obs['object_pos'][2] > (self.table_height + 0.05): # If object is off table
+            self.timer += 1
+            is_picked = obs['object_pos'][2] > (self.table_height + 0.05)
+            if self.timer > 50 and is_picked: # If object is off table
                 print("Pick Success!")
-                # self.state = "DONE" # Or handle next logic
+                self.state = "DONE" # Or handle next logic
 
         print("state:", self.state, ", action:", action)
         return action
