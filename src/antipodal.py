@@ -34,6 +34,7 @@ class AntiPodalGrasping:
         # Fixed Actions (Head looks down, Torso stays up)
         self.torso_height = 0.3
         self.head_tilt = 0.6 
+        self.action_xy = [0.0, 0.0]
 
     def reset(self):
         self.state = "IDLE"
@@ -116,7 +117,7 @@ class AntiPodalGrasping:
         
         if self.state == "IDLE":
             self.timer += 1
-            if self.timer > 50: # Give it 50 steps (~0.2s)
+            if self.timer > 100: # Give it 50 steps (~0.2s)
                 self.timer = 0
                 self.state = "CALCULATE"
 
@@ -202,8 +203,10 @@ class AntiPodalGrasping:
             
             # 5. Send THIS wrist position to IK, not the banana position
             pose_cmd = self._solve_ik(wrist_target_pos, t_orn, full_body_q)
-            action[0] = pose_cmd[0]
-            action[2:13] = pose_cmd[2:13]
+            # action[0] = pose_cmd[0]
+            # action[2:13] = pose_cmd[2:13]
+            action[:13] = pose_cmd[:13]
+            self.action_xy = pose_cmd[0:2]
             
             self.timer += 1
             if self.timer > 50:
@@ -219,7 +222,7 @@ class AntiPodalGrasping:
             wrist_target_pos = t_pos - (approach_vec * self.gripper_length)
             
             pose_cmd = self._solve_ik(wrist_target_pos, t_orn, full_body_q)
-            action[0] = pose_cmd[0]
+            action[0:2] = self.action_xy
             action[2:13] = pose_cmd[2:13]
             
             # COMMAND GRIPPER CLOSED
@@ -236,7 +239,7 @@ class AntiPodalGrasping:
             lift_pos = t_pos + np.array([0, 0, 0.4]) # Up 40cm
             
             pose_cmd = self._solve_ik(lift_pos, t_orn, full_body_q)
-            action[0] = pose_cmd[0]
+            action[0:2] = self.action_xy
             action[2:13] = pose_cmd[2:13]
             
             # Keep Gripper Closed
