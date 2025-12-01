@@ -17,7 +17,8 @@ class PickNavReachEnv:
     def __init__(self, 
                  seed=0,
                  object_idx=5,
-                 use_barret_hand=False):
+                 use_barret_hand=False,
+                 use_rl_grasping=False):
         self.set_seed(seed)
 
         self.pb_physics_client = p.connect(p.GUI) #change for training to p.DIRECT
@@ -32,6 +33,7 @@ class PickNavReachEnv:
         self.seed = seed
         self.object_idx = object_idx
         self.use_barret_hand = use_barret_hand
+        self.use_rl_grasping = use_rl_grasping
         
         self.action_scale = 0.05
         self.max_force = 2000000
