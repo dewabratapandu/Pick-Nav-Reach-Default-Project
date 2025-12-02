@@ -15,6 +15,8 @@ class PathPlanner:
         self.table_aabb = table_aabb
         self.robot_buffer_cells = np.ceil(robot_buffer_radius/cell_side_size).astype(int)
         self.occupancy_map = np.zeros((self.n_rows, self.n_cols), dtype=np.uint8)
+        self.is_barret = False
+        self.gripper_indices = [13, 14]
 
     def generate_map(self):
         if self.maze_info is None or len(self.maze_info) == 0:
@@ -318,10 +320,131 @@ class PathPlanner:
             new_robot_pos[1] = wy
             #keep the robot pointed in the movement direction
             target_yaw = math.atan2(wy - y, wx - x)
-            new_robot_pos[2] = target_yaw
+            #new_robot_pos[2] = target_yaw
             return new_robot_pos, curr_idx, path_completed
         else:
             return curr_robot_pos, curr_idx, True
+
+    def follow_path_with_item(
+            self,
+            path,
+            curr_idx,
+            curr_robot_pos,
+            starting_offset,
+            has_item = False,
+            waypoint_tol=0.01,
+            max_step_dist=0.02,  # max linear step per call (m)
+            max_yaw_step=0.05,  # max yaw change per call (rad)
+    ):
+        """
+        Smoothly follow a path (list of (wx, wy) in world/grid coords) by moving
+        only a small step toward the current waypoint each call, and by rotating
+        gradually toward the direction of travel.
+
+        Parameters
+        ----------
+        path : list[(float, float)]
+            Sequence of waypoints (wx, wy) before offset.
+        curr_idx : int
+            Index of the current waypoint in the path.
+        curr_robot_pos : [x, y, yaw]
+            Current robot pose in world frame.
+        starting_offset : (ox, oy)
+            Offset applied to path points to convert them to world frame.
+        waypoint_tol : float
+            Distance threshold (m) to consider a waypoint reached.
+        max_step_dist : float
+            Max linear distance the robot is allowed to move in one call.
+        max_yaw_step : float
+            Max yaw change (radians) per call.
+
+        Returns
+        -------
+        new_robot_pos : [x, y, yaw]
+            New target pose for this step.
+        curr_idx : int
+            Possibly updated waypoint index.
+        path_completed : bool
+        """
+
+        path_completed = False
+
+        if curr_idx >= len(path):
+            return curr_robot_pos, curr_idx, True
+
+        x = curr_robot_pos[0]
+        y = curr_robot_pos[1]
+        yaw = curr_robot_pos[2]
+        ox, oy = starting_offset
+
+        # --- 1. Make sure we have a valid current waypoint ---
+        wx, wy = path[curr_idx]
+        wx -= ox
+        wy -= oy
+
+        dx = wx - x
+        dy = wy - y
+        dist = math.hypot(dx, dy)
+
+        # --- 2. If we're close to the current waypoint, advance to the next ---
+        if dist <= waypoint_tol:
+            curr_idx += 1
+            if curr_idx >= len(path):
+                # Done.
+                return curr_robot_pos, curr_idx, True
+
+            # Recompute waypoint in world frame
+            wx, wy = path[curr_idx]
+            wx -= ox
+            wy -= oy
+
+            dx = wx - x
+            dy = wy - y
+            dist = math.hypot(dx, dy)
+
+            # If still basically on top of it, we may be done next cycle
+            if dist < 1e-6:
+                return curr_robot_pos, curr_idx, False
+
+        # --- 3. Take a small step toward the waypoint (smooth linear motion) ---
+        if dist > 1e-6:
+            step = min(max_step_dist, dist)
+            step_scale = step / dist
+            new_x = x + dx * step_scale
+            new_y = y + dy * step_scale
+        else:
+            new_x, new_y = x, y
+
+        # --- 4. Smooth yaw toward motion direction (smooth angular motion) ---
+        if dist > 1e-6:
+            desired_yaw = math.atan2(dy, dx)
+        else:
+            desired_yaw = yaw
+
+        '''
+        dyaw = angle_diff(desired_yaw, yaw)
+        # clamp yaw change
+        if dyaw > max_yaw_step:
+            dyaw = max_yaw_step
+        elif dyaw < -max_yaw_step:
+            dyaw = -max_yaw_step
+
+        new_yaw = yaw + dyaw
+        '''
+
+
+        new_robot_pos = curr_robot_pos.copy()
+        new_robot_pos[0] = new_x
+        new_robot_pos[1] = new_y
+        #new_robot_pos[2] = new_yaw
+
+
+        if not self.is_barret and has_item:
+            for i in self.gripper_indices:
+                new_robot_pos[i] = curr_robot_pos[i] - 0.002  #maintain grip
+                print("Tightening Grip")
+
+        return new_robot_pos, curr_idx, path_completed
 
     def _normalize_xy(self, x , y, recenter=False):
         x = np.floor((x - self.min_x)/self.cell_side_size).astype(int)
@@ -379,6 +502,18 @@ def get_robot_footprint(robot_id):
     depth = aabb_max[1] - aabb_min[1]
     height = aabb_max[2] - aabb_min[2]
     return width, depth, height
+
+def angle_diff(a, b):
+    """
+    Smallest signed difference between two angles a - b, wrapped to [-pi, pi].
+    """
+    d = a - b
+    while d > math.pi:
+        d -= 2.0 * math.pi
+    while d < -math.pi:
+        d += 2.0 * math.pi
+    return d
+
 
 
 

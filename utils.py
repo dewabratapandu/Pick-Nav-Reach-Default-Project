@@ -61,3 +61,12 @@ def tuck_arm(robot_pos, joint_name_to_idx, joint_ids):
             updated_robot_pos[idx] = jpos
 
     return updated_robot_pos
+
+# Reset the debug visualizer camera
+def set_camera_on_robot(curr_robot_x, curr_robot_y):
+    p.resetDebugVisualizerCamera(
+        cameraDistance=1.5,  # Distance of the camera from the target
+        cameraYaw=30.0,  # Yaw angle (horizontal rotation) in degrees
+        cameraPitch=-30.0,  # Pitch angle (vertical rotation) in degrees
+        cameraTargetPosition=[curr_robot_x, curr_robot_y, 1],
+    )
