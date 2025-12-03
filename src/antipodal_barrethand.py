@@ -32,8 +32,8 @@ class AntiPodalBarretGrasping:
         self.state = "IDLE" 
         self.target_grasp = None # (pos, orn)
         self.timer = 0
-        # self.gripper_length = self.calculate_dynamic_gripper_length()
-        self.gripper_length = 0.34
+        self.gripper_length = self.calculate_dynamic_gripper_length() + 0.02
+        # self.gripper_length = 0.25
         
         # Fixed Actions (Head looks down, Torso stays up)
         self.torso_height = 0.3
@@ -146,6 +146,9 @@ class AntiPodalBarretGrasping:
             # (Insert your generate_best_grasp code here)
             # For brevity, assuming self.generate_best_grasp returns (pos, orn)
             self.target_grasp = self.generate_best_grasp(points, normals)
+            # If target grasp is too low
+            if (self.target_grasp[0][2] < obs['object_pos'][2]):
+                self.gripper_length = 0.34
             
             if self.target_grasp[0] is not None:
                 print(f"Grasp Found: {self.target_grasp}!\nMoving to Pre-Grasp...")
@@ -279,37 +282,56 @@ class AntiPodalBarretGrasping:
         Returns: target_pos (3,), target_orn (4,) [quaternion]
         """
         
-        # 1. Filter out points that are too low (table collision)
-        # Assuming Z is up. Adjust threshold slightly above table height (e.g., +1cm)
-        height_threshold = self.table_height + 0.025 
-        valid_indices = np.where(points[:, 2] > height_threshold)[0]
+        # 1.a. Get object dimensions
+        min_x, max_x = np.min(points[:,0]), np.max(points[:,0])
+        min_y, max_y = np.min(points[:,1]), np.max(points[:,1])
+        min_z, max_z = np.min(points[:,2]), np.max(points[:,2])
+        x_dist = np.sqrt((min_x - max_x)**2)
+        y_dist = np.sqrt((min_y - max_y)**2)
+        z_dist = np.sqrt((min_z - max_z)**2)
+        shortest_axis = np.argmin([x_dist, y_dist])
+        longest_axis = np.argmax([x_dist, y_dist])
+        thresholds = np.array([(min_x+max_x)/2, (min_y+max_y)/2, (min_z+max_z)/2])
+        
+        # 1.b. Filter out points that are too low (table collision) and too high
+        high_height_threshold = max_z - 0.025
+        low_height_threshold = min_z + 0.025
+        valid_indices = np.where((points[:, 2] > low_height_threshold))[0]
         if len(valid_indices) < 2:
             return None, None
-            
         points = points[valid_indices]
         normals = normals[valid_indices]
+
+        # 1.c. Split points_a and points_b
+        indices_a = np.where(points[:, shortest_axis] > thresholds[shortest_axis])
+        points_a = points[indices_a]
+        normals_a = normals[indices_a]
+        indices_b = np.where(points[:, shortest_axis] < thresholds[shortest_axis])
+        points_b = points[indices_b]
+        normals_b = normals[indices_b]
         
-        # p.addUserDebugPoints(
-        #     pointPositions=points,
-        #     pointColorsRGB=[[0, 0, 1]] * points.shape[0],
-        #     pointSize=2.0,
-        #     lifeTime=0
-        # )
+        p.addUserDebugPoints(
+            pointPositions=points_a,
+            pointColorsRGB=[[0, 0, 1]] * points_a.shape[0],
+            pointSize=2.0,
+            lifeTime=0
+        )
         
         best_score = -1.0
         best_grasp = (None, None) # (pos, orn)
         best_points = (None, None)
 
         # 2. Random Sampling Loop
+        num_samples = max(num_samples, points_a.shape[0])
         for _ in range(num_samples):
             # Pick random point A
-            idx_a = np.random.randint(0, len(points))
-            p_a = points[idx_a]
-            n_a = normals[idx_a]
+            idx_a = np.random.randint(0, len(points_a))
+            p_a = points_a[idx_a]
+            n_a = normals_a[idx_a]
 
             # Find candidates for point B (simple distance filter)
             # Vectorized distance calculation
-            dists = np.linalg.norm(points - p_a, axis=1)
+            dists = np.linalg.norm(points_b - p_a, axis=1)
             
             # Candidates must be within max_width and not the same point
             candidates_idx = np.where((dists < self.max_width) & (dists > 0.005))[0]
@@ -319,8 +341,8 @@ class AntiPodalBarretGrasping:
 
             # Check antipodal constraints for all candidates
             for idx_b in candidates_idx:
-                p_b = points[idx_b]
-                n_b = normals[idx_b]
+                p_b = points_b[idx_b]
+                n_b = normals_b[idx_b]
                 
                 # Vector connecting the points
                 grasp_vector = p_b - p_a
@@ -364,13 +386,7 @@ class AntiPodalBarretGrasping:
                     # Try to align approach with global negative Z (top-down) 
                     # or towards robot base. Let's try horizontal approach first.
                     
-                    # Temporary Z (up)
-                    z_temp = np.array([0, 0, 1])
-                    
-                    # --- FIX START ---
-                    # We want the Red Arrow (Approach) to point roughly DOWN (-Z)
-                    # This creates a "Top-Down" grasp which is standard for tables.
-                    desired_approach = np.array([0, 0, -1]) 
+                    desired_approach = np.array([0, 0, -1])                   
                     
                     # 1. Calculate Z (Blue) first 
                     # Z must be perpendicular to both Grasp (Y) and Approach (Red)
@@ -384,13 +400,10 @@ class AntiPodalBarretGrasping:
                     # X = Y cross Z
                     x_axis = np.cross(y_axis, z_axis)
                     x_axis = x_axis / np.linalg.norm(x_axis)
-                    # --- FIX END ---
                     
                     # Construct Rotation Matrix (3x3)
                     # [x_axis, y_axis, z_axis] as columns
-                    new_y = -z_axis
-                    new_z = y_axis
-                    rot_matrix = np.column_stack((x_axis, new_y, new_z))
+                    rot_matrix = np.column_stack((x_axis, y_axis, z_axis))
                     
                     # Push it 2cm deeper
                     depth_nudge = 0.0

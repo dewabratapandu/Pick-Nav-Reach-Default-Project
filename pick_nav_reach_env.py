@@ -394,7 +394,7 @@ class PickNavReachEnv:
         return obs, is_ready
 
 if __name__ == "__main__":
-    USE_BARRET_HAND = False
+    USE_BARRET_HAND = True
     
     # It will load the robot and the environment
     # Since we also want to modify the robot, we should change this one too.
