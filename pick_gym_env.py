@@ -430,6 +430,10 @@ class PickEnv(gym.Env):
         p.loadURDF("plane.urdf", physicsClientId=self.pb_physics_client)
         self._load_scene()
 
+        #set camera
+        robot_pos, _ = p.getBasePositionAndOrientation(self.robot_id, physicsClientId=self.pb_physics_client)
+        utils.set_camera_on_robot_table(robot_pos[0], robot_pos[1])
+
         #return the initial observation
         obs = self._get_obs_gym().astype(self.observation_space.dtype)
 
@@ -1085,6 +1089,11 @@ def compute_grasp_reward_old(
 if __name__ == "__main__":
     env = PickEnv(gui=True, object_idx=10)
 
+    robot_pos, _ = p.getBasePositionAndOrientation(env.robot_id, env.pb_physics_client)
+
+    #set camera
+    utils.set_camera_on_robot_table(robot_pos[0], robot_pos[1])
+
     #load the model
     model = SAC.load("./models_sac_grasp_best_phase2/reward_23/best_model_submitable_5objs.zip", env=env)
 
@@ -1126,8 +1135,6 @@ if __name__ == "__main__":
                                   (table_aabb_min, table_aabb_max))
     pp.generate_map()
 
-
-    robot_pos, _ = p.getBasePositionAndOrientation(env.robot_id, env.pb_physics_client)
     qpos, _, _, _ = env._get_state()
 
     #actual robot position is xy-values from the robot base
@@ -1137,9 +1144,9 @@ if __name__ == "__main__":
     #find path in the maze
     path = []
     if env.use_astar:
-        path = pp.astar_2d((robot_x, robot_y), (env.goal_pos[0] - 0.75, env.goal_pos[1]))
+        path = pp.astar_2d((robot_x, robot_y), (env.goal_pos[0] - 0.6, env.goal_pos[1]))
     else:
-        path = pp.dijkstra_2d((robot_x, robot_y), (env.goal_pos[0] - 0.75, env.goal_pos[1]))
+        path = pp.dijkstra_2d((robot_x, robot_y), (env.goal_pos[0] - 0.6, env.goal_pos[1]))
 
     pre_movement_pos, _, _, _ = env._get_state()
 
