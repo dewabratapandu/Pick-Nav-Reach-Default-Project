@@ -5,13 +5,13 @@ import numpy as np
 import random 
 import trimesh 
 from pathlib import Path
+import sys
 
 import utils
 from maze_utils import generate_maze_map, add_left_room_to_maze, create_maze_urdf
 from copy import deepcopy
-from keyboard_control import KeyBoardController
-from robot_auxiliary_movements import tuck_arm_smooth
-from utils import closest_joint_values, tuck_arm
+from robot_auxiliary_movements import tuck_arm_smooth, raise_arm_smooth
+from utils import closest_joint_values
 import path_planner as path_planner
 import time
 import gymnasium as gym
@@ -38,11 +38,9 @@ class PickEnv(gym.Env):
         p.configureDebugVisualizer(rgbBackground=[1, 1, 1], physicsClientId=self.pb_physics_client)        # white background brightens perception
 
         self.seed = seed
-        #TODO:randomize later
         self.object_idx = object_idx
 
         self.max_steps = 100
-
         
         self.action_scale = 0.05
         self.max_force = 2000000
@@ -54,10 +52,6 @@ class PickEnv(gym.Env):
         # loading env
         p.loadURDF("plane.urdf", physicsClientId=self.pb_physics_client)
         self._load_scene()
-        #for _ in range(100):  # tune: 50–200 steps
-        #    p.stepSimulation(physicsClientId=self.pb_physics_client)
-
-        #self._reset_robot()
 
         # define action space, 9 joint values
         self.action_space = gym.spaces.Box(
@@ -91,12 +85,8 @@ class PickEnv(gym.Env):
         self._load_maze()
         self._load_object_goal()
 
-        #Let it settle a bit
-        #for _ in range(20):
-            #p.stepSimulation(physicsClientId=self.pb_physics_client)
-
     def _load_agent(self):
-        # Place the Fetch base near the table
+        #place the Fetch base near the table
         base_pos = [-1., 0.0, 0.0]
         base_ori = p.getQuaternionFromEuler([0, 0, 0], physicsClientId=self.pb_physics_client)
         self.robot_id = p.loadURDF(
@@ -145,10 +135,10 @@ class PickEnv(gym.Env):
         # Joints controlled by RL (arm + gripper)
         self.ctrl_joints = self.arm_joints + self.gripper_joint_indices  # 9 joints
 
-        # Joints not controlled by RL (arm + gripper)
+        # Joints not controlled by RL
         self.non_ctrl_joints = [j for j in self.joint_indices if j not in self.ctrl_joints]
 
-        #end-effector
+        #end-effector link
         self.ee_link_index = 20
 
         # Set an initial configuration
@@ -182,11 +172,9 @@ class PickEnv(gym.Env):
                 high = self.joint_upper[idx]
                 init_qpos[idx] = np.clip(angle, low, high)
 
-        print(f"joint_indices:{self.joint_indices} | joint_upper:{self.joint_upper} | joint_lower:{self.joint_lower}")
         self.init_qpos = init_qpos
         self._set_qpos(self.init_qpos)
 
-    #TODO: changes for object id for randomization
     def _load_object_table(self):
         p.setAdditionalSearchPath(pybullet_data.getDataPath(), physicsClientId=self.pb_physics_client)
         self.table_id = p.loadURDF("table/table.urdf", baseOrientation=p.getQuaternionFromEuler([0,0,np.pi/2]), useFixedBase=1, physicsClientId=self.pb_physics_client)
@@ -216,7 +204,7 @@ class PickEnv(gym.Env):
         eps = 0.002  # 2mm gap to avoid interpenetration
         obj_center_z = self.table_z + half_h + eps
 
-        #Reset object pose
+        #Reset object pose so it doesn't fall-over from top
         x, y = 0.0, 0.0
         p.resetBasePositionAndOrientation(
             self.object_id,
@@ -380,7 +368,7 @@ class PickEnv(gym.Env):
 
     def step(self, action):
         """
-        Gym/Gymnasium-style step for SAC with joint-delta control + 11D obs.
+        Gym/Gymnasium compatible step for SAC.
         """
         self.step_count += 1
 
@@ -426,46 +414,27 @@ class PickEnv(gym.Env):
         return self._get_obs()
 
     def reset(self, *, seed: int | None = None, options: dict | None = None):
-        # 1. Let Gym/Gymnasium handle seeding bookkeeping
         super().reset(seed=seed)
 
-        # 2. Reset internal counters
+        #reset internal counters
         self.step_count = 0
 
-        # 3. Reset the Bullet world
+        #reset the Bullet world
         p.resetSimulation(physicsClientId=self.pb_physics_client)
         p.setGravity(0, 0, -9.8, physicsClientId=self.pb_physics_client)
         p.setTimeStep(1.0 / 240.0, physicsClientId=self.pb_physics_client)
 
-        # 4. Rebuild the static scene: plane, table, robot, etc.
+        #rebuild scene: plane, table, robot, object.
         local_rng = random.Random()
         self.object_idx = local_rng.randint(0, 10)
         p.loadURDF("plane.urdf", physicsClientId=self.pb_physics_client)
         self._load_scene()
 
-
-        #for _ in range(100):  # tune: 50–200 steps
-        #    p.stepSimulation(physicsClientId=self.pb_physics_client)
-
-        # 5. Put the robot in a known "home" configuration
-        #self._reset_robot() #TODO move robot closer maybe
-
-        # 7. Return the initial observation
+        #return the initial observation
         obs = self._get_obs_gym().astype(self.observation_space.dtype)
 
         info = {}
         return obs, info
-
-    def _reset_robot(self):
-        target_pos = self.init_qpos.copy()
-        target_pos[0] = 0.5
-
-        print("DEBUG default:", p.getNumJoints(self.robot_id))  # default client
-        print("DEBUG actual:", p.getNumJoints(self.robot_id, physicsClientId=self.pb_physics_client))  # correct client
-
-        self._apply_joint_targets(target_pos)
-        for _ in range(self.substeps*2):
-            p.stepSimulation(physicsClientId=self.pb_physics_client)
 
     def evaluate(self):
         """
@@ -512,23 +481,25 @@ class PickEnv(gym.Env):
     def _get_obs_gym(self):
         qpos, _, object_pos, object_xyzw = self._get_state()  # （15，）（15,）（3,）（4，）
 
+        #object position
         object_pos = np.array(object_pos, dtype=np.float32)
 
-        #gripper-axis is the joint before ee
+        #end effector position & orientation
         end_effector_state = p.getLinkState(self.robot_id, self.ee_link_index, computeForwardKinematics=True, physicsClientId=self.pb_physics_client)
         end_effector_pos = np.array(end_effector_state[4], dtype=np.float32)
         end_effector_orn = end_effector_state[5]
 
-        # Convert quaternion → Euler to get yaw (around z-axis)
+        #convert quaternion → Euler to get yaw (around z-axis)
         end_effector_rpy = p.getEulerFromQuaternion(end_effector_orn, physicsClientId=self.pb_physics_client)
         end_effector_yaw = np.float32(end_effector_rpy[2])  # single float
 
-        #relative position
+        #relative position of object wrt end effector
         rel_pos = object_pos - end_effector_pos
 
         #gap b/w fingers
         grip_width = np.float32(qpos[13] + qpos[14])
 
+        #arm + gripper joint values
         all_states = p.getJointStates(
             self.robot_id,
             self.ctrl_joints,
@@ -536,8 +507,8 @@ class PickEnv(gym.Env):
         )
         q_ctrl = np.array([s[0] for s in all_states], dtype=np.float32)
 
+        #object dimensions
         min_xyz, max_xyz = p.getAABB(self.object_id, physicsClientId=self.pb_physics_client)
-
         min_x, min_y, min_z = min_xyz
         max_x, max_y, max_z = max_xyz
         lx = max_x - min_x
@@ -545,7 +516,7 @@ class PickEnv(gym.Env):
         lz = max_z - min_z
         obj_size = np.array([lx, ly, lz], dtype=np.float32)
 
-        #combine
+        #combining observations
         observation = np.concatenate([
             end_effector_pos,  # 3
             np.array([end_effector_yaw], np.float32),  # 1
@@ -600,11 +571,10 @@ def compute_grasp_reward_v2(
     dist_weight= 0.2,
     hover_bonus=1,
     grasp_bonus=2.0,
-    lift_bonus=10.0,           # ⬅️ make success clearly worth it
+    lift_bonus=10.0,
     time_penalty=-0.01,
     fail_penalty=-5.0,
-    height_weight=10.0,        # ⬅️ shaping for object height progress
-    dist_abs_weight = 0.5,
+    height_weight=10.0,
 ):
     """
     prev_obs, obs: np.array shape (11,)
@@ -730,14 +700,14 @@ def compute_grasp_reward(
     dist_weight= 1,
     hover_bonus=1,
     grasp_bonus=2.0,
-    lift_bonus=10.0,           # ⬅️ make success clearly worth it
+    lift_bonus=10.0,
     time_penalty=-0.01,
     fail_penalty=-5.0,
-    height_weight=10.0,        # ⬅️ shaping for object height progress
+    height_weight=10.0,
     dist_abs_weight = 0.5,
 ):
     """
-    prev_obs, obs: np.array shape (11,)
+    prev_obs, obs: np.array shape (23,)
     table_z: float, *resting* object/table height in world coordinates
              (e.g., init_obj_z you stored at reset)
     Returns: scalar reward (float)
@@ -803,10 +773,7 @@ def compute_grasp_reward(
 
     # "Closing" if grip_width decreased (assuming smaller = more closed)
     object_near_ee = np.linalg.norm(rel_pos) < 0.05  # within 5 cm in 3D
-
-
     closing = (prev_grip - grip) > 0.0
-
     r_grasp = grasp_bonus if (object_near_ee and closing) else 0.0
 
     # -------- 4) Object height progress shaping --------
@@ -859,14 +826,14 @@ def compute_grasp_reward_better_closing(
     hover_bonus=1,
     grasp_bonus=5.0,
     grasp_sustain_bonus=0.1,
-    lift_bonus=10.0,           # ⬅️ make success clearly worth it
+    lift_bonus=10.0,
     time_penalty=-0.01,
     fail_penalty=-5.0,
-    height_weight=10.0,        # ⬅️ shaping for object height progress
+    height_weight=10.0,
     dist_abs_weight = 0.5,
 ):
     """
-    prev_obs, obs: np.array shape (11,)
+    prev_obs, obs: np.array shape (23,)
     table_z: float, *resting* object/table height in world coordinates
              (e.g., init_obj_z you stored at reset)
     Returns: scalar reward (float)
@@ -1117,14 +1084,11 @@ def compute_grasp_reward_old(
 
 if __name__ == "__main__":
     env = PickEnv(gui=True, object_idx=10)
-    #env.mini_reset()
-    #keyboard_controller = KeyBoardController(env)
 
     #load the model
     model = SAC.load("./models_sac_grasp_best_phase2/reward_23/best_model_submitable_5objs.zip", env=env)
 
-
-    #TODO: pick the object
+    #pick the object
     done = False
     terminated = False
     truncated = False
@@ -1140,89 +1104,72 @@ if __name__ == "__main__":
         ep_reward += reward
         steps += 1
 
-    if done and terminated and info["lifted"]:
-        print("Picked")
-        # tuck robot arm to minimize space
-        qpos, _, _, _ = env._get_state()
-        print(f"")
-        print(f"Picked q_pos: {qpos}")
+    #check if picked
+    if not (done and terminated and info["lifted"]):
+        sys.exit("Robot couldn't pick the object")
 
-        #raise_torso_smooth(env.robot_id, qpos, env.joint_name_to_id, env.joint_indices, target_height= 0.35)
-        print("Raised torso")
-        tuck_arm_smooth(env.robot_id, qpos, env.joint_name_to_id, env.joint_indices, control_hz=120)
-        '''
-        tuck_arm_pos = tuck_arm(qpos, env.joint_name_to_id, env.joint_indices)
-        env._apply_joint_targets(tuck_arm_pos)  # move the arm
-        # TODO : make tuck arm a part of env
-        for _ in range(env.substeps*5):
-            p.stepSimulation(physicsClientId=env.pb_physics_client)
-            time.sleep(1. / 240.)
-        '''
-    print("Picked and tucked")
-    #time.sleep(30)
-    #calculate robot footprint
+
+    # tuck robot arm to minimize space
+    qpos, _, _, _ = env._get_state()
+    tuck_arm_smooth(env.robot_id, qpos, env.joint_name_to_id, env.joint_indices, control_hz=120)
+
+    #calculate robot footprint for path planning
     footprint = path_planner.get_robot_footprint(env.robot_id)
-    print(f"footprint: {footprint}")
 
     #using width and depth for radius
     robot_radius = footprint[1] / 2
 
-    # calculate map
+    #calculating map of maze
     cell_side_size = 0.2
     table_aabb_min, table_aabb_max = p.getAABB(env.table_id, physicsClientId=env.pb_physics_client)
     pp = path_planner.PathPlanner(env.cube_positions, 22, 12, cell_side_size, robot_radius,
                                   (table_aabb_min, table_aabb_max))
     pp.generate_map()
 
-    # calculate path
+
     robot_pos, _ = p.getBasePositionAndOrientation(env.robot_id, env.pb_physics_client)
     qpos, _, _, _ = env._get_state()
-    # actual robot position is xy-values from the robot base
+
+    #actual robot position is xy-values from the robot base
     robot_x = round(robot_pos[0] + qpos[0], 2)
     robot_y = round(robot_pos[1] + qpos[1], 2)
 
+    #find path in the maze
     path = []
     if env.use_astar:
-        path = pp.astar_2d((robot_x, robot_y), (env.goal_pos[0], env.goal_pos[1]))
+        path = pp.astar_2d((robot_x, robot_y), (env.goal_pos[0] - 0.75, env.goal_pos[1]))
     else:
-        path = pp.dijkstra_2d((robot_x, robot_y), (env.goal_pos[0], env.goal_pos[1]))
-    print(f"Path to be taken: {path}")
+        path = pp.dijkstra_2d((robot_x, robot_y), (env.goal_pos[0] - 0.75, env.goal_pos[1]))
 
     pre_movement_pos, _, _, _ = env._get_state()
 
     #move the robot along the path
     path_idx = 0
     while True:
-        # random_action = np.random.uniform(-1.0, 1.0, size=(env.action_size,))
-        # action = keyboard_controller.get_action()
         qpos, _, _, _ = env._get_state()
 
-        # Reset the debug visualizer camera
-        utils.set_camera_on_robot(qpos[0] - robot_pos[0], qpos[1] - robot_pos[1])
+        #reset the debug visualizer camera near the robot
+        utils.set_camera_on_robot(qpos[0] + robot_pos[0], qpos[1] + robot_pos[1])
 
         updated_pos, path_idx, is_complete = pp.follow_path_with_item(path, path_idx, qpos, (robot_pos[0], robot_pos[1]), has_item=True)
         if not is_complete:
-            #grasping
 
-            #keep arm locked in-position
+            #keep updating arm joint values to keep it in locked in-position and prevent impact of movement
             action = pre_movement_pos.copy()
             #updating base positions
             action[0] = updated_pos[0]
             action[1] = updated_pos[1]
             action[2] = updated_pos[2]
-            print(f"Updated action: {updated_pos} | action: {action}")
-            #gripper
+            #gripper adjustment to keep object in place
             action[13] = updated_pos[13]
             action[14] = updated_pos[14]
 
-            #move_robot(env.robot_id, qpos, action, env.joint_name_to_id, env.joint_indices, duration=0.01)
-            #TODO: keep the grasp also in locked position
             env._apply_joint_targets(action)
-            # for k, v in info.items():
-            #    print(f"{k}: {v}")
             p.stepSimulation()
             time.sleep(1. / 240.)
         else:
+            raise_arm_smooth(env.robot_id, updated_pos, env.joint_name_to_id, env.joint_indices, control_hz=120)
+            #TODO: Add evaluation function given already
             print("Path complete")
         time.sleep(1. / 240.)
 

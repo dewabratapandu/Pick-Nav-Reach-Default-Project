@@ -1,5 +1,4 @@
 import time
-import math
 import numpy as np
 import pybullet as p
 
@@ -59,6 +58,47 @@ def tuck_arm_smooth(
     }
 
     smooth_transition(robot_id, robot_pos, tuck_targets_name, joint_name_to_idx, joint_ids, duration, control_hz, max_force)
+
+def raise_arm_smooth(
+    robot_id,
+    robot_pos,
+    joint_name_to_idx,
+    joint_ids,
+    duration= 0.5,
+    control_hz=240,
+    max_force=80.0,
+):
+    """
+    Gently raise the arm while keeping the gripper closed.
+
+    Parameters
+    ----------
+    robot_id : int
+        PyBullet bodyUniqueId of the robot.
+    robot_pos : sequence of float
+        Current joint positions, in the same order as `joint_ids`.
+    joint_name_to_idx : dict[str, int]
+        Mapping from joint name (e.g. 'shoulder_lift_joint') to joint index in PyBullet.
+    joint_ids : sequence of int
+        Joint indices corresponding to entries in `robot_pos`.
+    duration : float
+        Time (seconds) over which to tuck the arm.
+    control_hz : float
+        Control frequency (Hz).
+    max_force : float
+        Max motor force for the arm and gripper joints during the motion.
+    """
+
+    #joint values for raising the arm
+    targets_name_values = {
+        "shoulder_lift_joint": -1.4,
+        "elbow_flex_joint":    1.2,
+        "forearm_roll_joint":  0.0,
+        "wrist_flex_joint":    1.4,
+        "wrist_roll_joint":    0.0,
+    }
+
+    smooth_transition(robot_id, robot_pos, targets_name_values, joint_name_to_idx, joint_ids, duration, control_hz, max_force)
 
 def move_robot(robot_id,
     robot_pos,
