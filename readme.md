@@ -3,7 +3,7 @@ There are two main files in this repository:
 - `pick_nav_reach_env.py` for antipodal grasping
 - `pick_gym_env.py` for SAC grasping
 
-# How to test RL-based grasping mechanism and navigration through the grid
+# How to test RL-based grasping mechanism and navigation through the grid
 1. Download the model file: https://drive.google.com/file/d/1uvOMd-7vwug5uu22OZSwakHCSaUcycvp/view?usp=drive_link
 2. Place it in the root directory or otherwise change path in `pick_gym_env.py` -> `model = SAC.load("./best_model_submittable_final.zip", env=env)`
 3. Run python pick_gym_env.py
