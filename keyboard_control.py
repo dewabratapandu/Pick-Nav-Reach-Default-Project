@@ -262,8 +262,8 @@ class KeyBoardController:
             unit_action = [self.forward, self.turn, self.yaw, self.torso_lift, self.head_pan, self.head_tilt, self.shoulder_pan, self.shoulder_lift, self.upperarm_roll, self.elbow_flex, self.forearm_roll, self.wrist_flex, self.wrist_roll, self.finger32, self.finger33, self.finger11, self.finger12, self.finger13, self.finger21, self.finger22, self.finger23]
         else:
             unit_action = [self.forward, self.turn, self.yaw, self.torso_lift, self.head_pan, self.head_tilt, self.shoulder_pan, self.shoulder_lift, self.upperarm_roll, self.elbow_flex, self.forearm_roll, self.wrist_flex, self.wrist_roll, self.gripper_open, self.gripper_open]
-        print("unit_action: ", unit_action)
         self.action = self.action + self.action_scale * np.array(unit_action)
+        print("action:", self.action)
         
     def get_action(self):
         self.key_callback()
