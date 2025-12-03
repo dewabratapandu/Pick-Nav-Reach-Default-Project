@@ -1,10 +1,10 @@
 from stable_baselines3 import SAC
-from pick_gym_env import PickEnv
+from pick_rl_barret_env import PickRLBarretEnv
 
-env = PickEnv(gui=True, object_idx = 5)
-model = SAC.load("./models_sac_grasp_best_phase2/reward_23/best_model_submitable_5objs.zip", env=env)  # or pass env later
+env = PickRLBarretEnv(gui=True, object_idx = 5)
+model = SAC.load("./barret_models/reward_1/best_models_cont/best_model.zip", env=env)  # or pass env later
 
-for ep in range(2):
+for ep in range(5):
     obs, _ = env.reset()
     print(f"Observation Initial: {obs}")
     done = False
