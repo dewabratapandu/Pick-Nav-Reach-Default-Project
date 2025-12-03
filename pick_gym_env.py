@@ -1095,7 +1095,7 @@ if __name__ == "__main__":
     utils.set_camera_on_robot_table(robot_pos[0], robot_pos[1])
 
     #load the model
-    model = SAC.load("./models_sac_grasp_best_phase2/reward_23/best_model_submitable_5objs.zip", env=env)
+    model = SAC.load("./best_model_submittable_final.zip", env=env)
 
     #pick the object
     done = False
