@@ -394,11 +394,11 @@ class PickNavReachEnv:
         return obs, is_ready
 
 if __name__ == "__main__":
-    USE_BARRET_HAND = True
+    USE_BARRET_HAND = False
     
     # It will load the robot and the environment
     # Since we also want to modify the robot, we should change this one too.
-    env = PickNavReachEnv(seed=42, object_idx=5, use_barret_hand=USE_BARRET_HAND)
+    env = PickNavReachEnv(seed=42, object_idx=4, use_barret_hand=USE_BARRET_HAND)
     env.reset()
     print(f"Action size: {env.action_size}, Obs size: {env.obs_size}")
     

@@ -29,7 +29,7 @@ class AntiPodalGrasping:
         self.state = "IDLE" 
         self.target_grasp = None # (pos, orn)
         self.timer = 0
-        self.gripper_length = self.calculate_dynamic_gripper_length()
+        self.gripper_length = self.calculate_dynamic_gripper_length() + 0.02
         
         # Fixed Actions (Head looks down, Torso stays up)
         self.torso_height = 0.3
@@ -209,7 +209,7 @@ class AntiPodalGrasping:
             self.action_xy = pose_cmd[0:2]
             
             self.timer += 1
-            if self.timer > 50:
+            if self.timer > 100:
                 self.timer = 0
                 self.state = "CLOSE_GRIPPER"
 
@@ -270,14 +270,14 @@ class AntiPodalGrasping:
         x_dist = np.sqrt((min_x - max_x)**2)
         y_dist = np.sqrt((min_y - max_y)**2)
         z_dist = np.sqrt((min_z - max_z)**2)
-        shortest_axis = np.argmin([x_dist, y_dist, z_dist])
-        longest_axis = np.argmax([x_dist, y_dist, z_dist])
+        shortest_axis = np.argmin([x_dist, y_dist])
+        longest_axis = np.argmax([x_dist, y_dist])
         thresholds = np.array([(min_x+max_x)/2, (min_y+max_y)/2, (min_z+max_z)/2])
         
         # 1.b. Filter out points that are too low (table collision) and too high
         high_height_threshold = max_z - 0.025
         low_height_threshold = min_z + 0.025
-        valid_indices = np.where((points[:, 2] > low_height_threshold) & (points[:, 2] < high_height_threshold))[0]
+        valid_indices = np.where((points[:, 2] > low_height_threshold))[0]
         if len(valid_indices) < 2:
             return None, None
         points = points[valid_indices]
@@ -292,8 +292,8 @@ class AntiPodalGrasping:
         normals_b = normals[indices_b]
         
         p.addUserDebugPoints(
-            pointPositions=points,
-            pointColorsRGB=[[0, 0, 1]] * points.shape[0],
+            pointPositions=points_a,
+            pointColorsRGB=[[0, 0, 1]] * points_a.shape[0],
             pointSize=2.0,
             lifeTime=0
         )
@@ -306,9 +306,9 @@ class AntiPodalGrasping:
         num_samples = max(num_samples, points_a.shape[0])
         for _ in range(num_samples):
             # Pick random point A
-            idx_a = np.random.randint(0, len(points))
-            p_a = points[idx_a]
-            n_a = normals[idx_a]
+            idx_a = np.random.randint(0, len(points_a))
+            p_a = points_a[idx_a]
+            n_a = normals_a[idx_a]
 
             # Find candidates for point B (simple distance filter)
             # Vectorized distance calculation
@@ -322,8 +322,8 @@ class AntiPodalGrasping:
 
             # Check antipodal constraints for all candidates
             for idx_b in candidates_idx:
-                p_b = points[idx_b]
-                n_b = normals[idx_b]
+                p_b = points_b[idx_b]
+                n_b = normals_b[idx_b]
                 
                 # Vector connecting the points
                 grasp_vector = p_b - p_a
@@ -367,10 +367,7 @@ class AntiPodalGrasping:
                     # Try to align approach with global negative Z (top-down) 
                     # or towards robot base. Let's try horizontal approach first.
                     
-                    if (longest_axis == 2):
-                        desired_approach = np.array([1, 0, 0])
-                    else:
-                        desired_approach = np.array([0, 0, -1])                   
+                    desired_approach = np.array([0, 0, -1])                   
                     
                     # 1. Calculate Z (Blue) first 
                     # Z must be perpendicular to both Grasp (Y) and Approach (Red)
