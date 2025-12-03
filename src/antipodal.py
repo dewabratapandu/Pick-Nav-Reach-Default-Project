@@ -35,6 +35,9 @@ class AntiPodalGrasping:
         self.torso_height = 0.3
         self.head_tilt = 0.6 
         self.action_xy = [0.0, 0.0]
+        self.action_arm = [0.0] * len(arm_indices)
+        self.action_fingers = [1.0, 1.0]
+        self.starting_pos = False
 
     def reset(self):
         self.state = "IDLE"
@@ -105,9 +108,6 @@ class AntiPodalGrasping:
         
         # 1. Initialize Action Array (15 DoF)
         action = np.zeros(15)
-        
-        # Default Gripper: Open (0.05)
-        gripper_cmd = 0.05
         
         # Extract current arm state for IK regularization
         full_body_q = obs['qpos'] 
@@ -226,7 +226,7 @@ class AntiPodalGrasping:
             action[2:13] = pose_cmd[2:13]
             
             # COMMAND GRIPPER CLOSED
-            gripper_cmd = 0.0
+            self.action_fingers = [0.0, 0.0]
             
             self.timer += 1
             if self.timer > 40: # Wait for gripper to squeeze
@@ -243,16 +243,29 @@ class AntiPodalGrasping:
             action[2:13] = pose_cmd[2:13]
             
             # Keep Gripper Closed
-            gripper_cmd = 0.0
+            self.action_fingers = [0.0, 0.0]
             
             # End condition
-            if obs['object_pos'][2] > (self.table_height + 0.05): # If object is off table
+            self.timer += 1
+            is_picked = obs['object_pos'][2] > (self.table_height + 0.05)
+            if self.timer > 50 and is_picked: # If object is off table
                 print("Pick Success!")
-                # self.state = "DONE" # Or handle next logic
+                self.action_fingers = obs['qpos'][13:15] - 0.03 # hold this actions
+                self.action_arm = obs['qpos'][2:13]
+                self.state = "DONE" # Or handle next logic
+                self.timer = 0
+        
+        elif self.state == "DONE":
+            action[0] = obs['qpos'][0] - 0.05
+            action[0] = action[0] if action[0] > 0.0 else 0.0
+            action[1] = obs['qpos'][1] - 0.05
+            action[1] = action[1] if action[1] > 0.0 else 0.0
+            action[2:13] = self.action_arm
+            action[13:15] = self.action_fingers
+            self.timer += 1
 
         # 3. Apply Gripper Command
-        action[13] = gripper_cmd
-        action[14] = gripper_cmd
+        action[13:15] = self.action_fingers
         print("state:", self.state, ", action:", action)
         return action
 

@@ -408,7 +408,7 @@ if __name__ == "__main__":
     
     # It will load the robot and the environment
     # Since we also want to modify the robot, we should change this one too.
-    env = PickNavReachEnv(seed=42, use_barret_hand=USE_BARRET_HAND, use_astar=True)
+    env = PickNavReachEnv(seed=42, object_idx=4, use_barret_hand=USE_BARRET_HAND, use_astar=True)
     env.reset()
     print(f"Action size: {env.action_size}, Obs size: {env.obs_size}")
     
@@ -416,8 +416,17 @@ if __name__ == "__main__":
     # There are 15 units of action we should control. Check keyboard-action-readme.md!
     keyboard_controller = KeyBoardController(env, use_barret_hand=USE_BARRET_HAND)
 
-    #TODO: pick the object
-    #check if not picked retry/exit the program
+    if (USE_BARRET_HAND):
+        antipodal_controller = AntiPodalBarretGrasping(env.robot_id, range(0, 2), range(2,13), range(13, 21))
+    else:
+        antipodal_controller = AntiPodalGrasping(env.robot_id, range(0, 2), range(2,13), range(13,15))
+    
+    while True:
+        obs, is_ready = env.is_object_ready()
+        action = antipodal_controller.get_action(obs)
+        obs, info = env.step(action)
+        if (antipodal_controller.state == "DONE" and antipodal_controller.timer > 100):
+            break
 
     # tuck robot arm to minimize space
     qpos, _, _, _ = env._get_state()
