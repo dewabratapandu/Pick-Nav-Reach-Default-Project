@@ -8,7 +8,9 @@ from pathlib import Path
 from maze_utils import generate_maze_map, add_left_room_to_maze, create_maze_urdf
 from copy import deepcopy
 from keyboard_control import KeyBoardController
-from utils import closest_joint_values, tuck_arm
+from utils import closest_joint_values
+import utils
+from robot_auxiliary_movements import tuck_arm_smooth, raise_arm_smooth
 import path_planner as path_planner
 import time
 
@@ -393,18 +395,14 @@ if __name__ == "__main__":
     keyboard_controller = KeyBoardController(env, use_barret_hand=USE_BARRET_HAND)
 
     #TODO: pick the object
+    #check if not picked retry/exit the program
 
-
-    #tuck robot arm to minimize space
+    # tuck robot arm to minimize space
     qpos, _, _, _ = env._get_state()
-    tuck_arm_pos = tuck_arm(qpos, env.joint_name_to_id, env.joint_indices)
-    _, _ = env.step(tuck_arm_pos) #move the arm
-    p.stepSimulation()
-    time.sleep(1. / 240.)
+    tuck_arm_smooth(env.robot_id, qpos, env.joint_name_to_id, env.joint_indices, control_hz=120)
 
-    #calculate robot footprint
+    # calculate robot footprint for path planning
     footprint = path_planner.get_robot_footprint(env.robot_id)
-    print(f"footprint: {footprint}")
 
     #using width and depth for radius
     robot_radius = footprint[1] / 2
@@ -415,20 +413,21 @@ if __name__ == "__main__":
     pp = path_planner.PathPlanner(env.cube_positions, 22, 12, cell_side_size, robot_radius, (table_aabb_min, table_aabb_max))
     pp.generate_map()
 
-    # calculate path
     robot_pos, _ = p.getBasePositionAndOrientation(env.robot_id, env.pb_physics_client)
     qpos, _, _, _ = env._get_state()
-    #actual robot position is xy-values from the robot base
+
+    # actual robot position is xy-values from the robot base
     robot_x = round(robot_pos[0] + qpos[0], 2)
     robot_y = round(robot_pos[1] + qpos[1], 2)
 
+    # find path in the maze
     path = []
     if env.use_astar:
-        path = pp.astar_2d((robot_x, robot_y), (env.goal_pos[0], env.goal_pos[1]))
+        path = pp.astar_2d((robot_x, robot_y), (env.goal_pos[0] - 0.75, env.goal_pos[1]))
     else:
-        path = pp.dijkstra_2d((robot_x, robot_y), (env.goal_pos[0], env.goal_pos[1]))
+        path = pp.dijkstra_2d((robot_x, robot_y), (env.goal_pos[0] - 0.75, env.goal_pos[1]))
 
-    print(f"Path to be taken: {path}")
+    pre_movement_pos, _, _, _ = env._get_state()
 
     #move the robot along the path
     path_idx = 0
@@ -437,20 +436,26 @@ if __name__ == "__main__":
         # action = keyboard_controller.get_action()
         qpos, _, _, _ = env._get_state()
 
-        updated_pos, path_idx, is_complete = pp.follow_path(path, path_idx, qpos, (robot_pos[0], robot_pos[1]))
+        # reset the debug visualizer camera near the robot
+        utils.set_camera_on_robot(qpos[0] + robot_pos[0], qpos[1] + robot_pos[1])
+
+        updated_pos, path_idx, is_complete = pp.follow_path_with_item(path, path_idx, qpos, (robot_pos[0], robot_pos[1]), has_item=True)
         if not is_complete:
-            #keep arm locked in-position
-            action = tuck_arm_pos.copy()
-            #updating base positions
+            # keep updating arm joint values to keep it in locked in-position and prevent impact of movement
+            action = pre_movement_pos.copy()
+            # updating base positions
             action[0] = updated_pos[0]
             action[1] = updated_pos[1]
             action[2] = updated_pos[2]
-            #TODO: keep the grasp also in locked position
+            # gripper adjustment to keep object in place
+            action[13] = updated_pos[13]
+            action[14] = updated_pos[14]
             obs, info = env.step(action)
             # for k, v in info.items():
             #    print(f"{k}: {v}")
             p.stepSimulation()
         else:
+            raise_arm_smooth(env.robot_id, updated_pos, env.joint_name_to_id, env.joint_indices, control_hz=120)
             print("Path complete")
         time.sleep(1. / 240.)
 
