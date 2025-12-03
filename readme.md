@@ -1,3 +1,8 @@
+# README!!
+There are two main files in this repository:
+- `pick_nav_reach_env.py` for antipodal grasping
+- `pick_gym_env.py` for SAC grasping
+
 # Default-Course-Project
 Default Course Project of CS4278/CS5478 Intelligent Robots: Algorithms and Systems
 
